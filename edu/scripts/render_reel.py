@@ -29,6 +29,7 @@ from edu.scripts.scene_plan import (
     post_caption,
     spoken_seconds,
 )
+from edu.sources.http import SourceError, make_client, request_with_retry
 
 TONE_RATE = 22050
 TONE_FREQ = 220.0
@@ -117,25 +118,44 @@ def _suffix(url: str) -> str:
     return ".jpg"
 
 
-def stage_image(document: dict, directory: Path) -> str | None:
+def stage_image(
+    document: dict,
+    directory: Path,
+    client: httpx.Client | None = None,
+) -> str | None:
+    """Download one licensed still. Retries use the shared source HTTP helper."""
+
     chosen = ken_burns_source(document)
     if chosen is None:
         return None
     filename = "ken-burns" + _suffix(chosen["url"])
     destination = directory / filename
+    owns_client = client is None
+    http = client or make_client()
     try:
-        with httpx.Client(timeout=30.0, follow_redirects=True) as client:
-            response = client.get(chosen["url"])
-            response.raise_for_status()
-            content_type = response.headers.get("content-type", "")
-            if content_type and not content_type.startswith("image/"):
-                return None
-            ensure_parent(destination)
-            destination.write_bytes(response.content)
-    except (httpx.HTTPError, OSError) as exc:
+        try:
+            response = request_with_retry(http, "GET", chosen["url"])
+        except SourceError as exc:
+            print(f"edu-video: skipped Ken Burns image: {exc}", file=sys.stderr)
+            return None
+        if response.status_code >= 400:
+            print(
+                f"edu-video: skipped Ken Burns image: HTTP {response.status_code}",
+                file=sys.stderr,
+            )
+            return None
+        content_type = response.headers.get("content-type", "")
+        if content_type and not content_type.startswith("image/"):
+            return None
+        ensure_parent(destination)
+        destination.write_bytes(response.content)
+    except OSError as exc:
         print(f"edu-video: skipped Ken Burns image: {exc}", file=sys.stderr)
         return None
-    if destination.stat().st_size < 32:
+    finally:
+        if owns_client:
+            http.close()
+    if not destination.is_file() or destination.stat().st_size < 32:
         return None
     return filename
 
@@ -165,11 +185,12 @@ def prepare_render(package_path: Path) -> tuple[dict, Path, Path]:
     spoken = spoken_seconds(spoken, backend)
     captions, _caption_backend = ensure_captions(audio, spoken_script, spoken)
     image_file = None
-    for source in package.get("sources") or []:
-        if isinstance(source, dict):
-            image_file = stage_image(source, folder)
-            if image_file:
-                break
+    with make_client() as client:
+        for source in package.get("sources") or []:
+            if isinstance(source, dict):
+                image_file = stage_image(source, folder, client)
+                if image_file:
+                    break
     props = build_props(
         package,
         spoken=spoken,
