@@ -3,11 +3,13 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 import httpx
 
-from edu.scripts.run_video import build_package, topic_slug, write_package
-from edu.scripts.script_gen import GroundingError
+from edu.scripts.fact_check import ClaimReport, FactCheckError, FactReport
+from edu.scripts.run_video import build_package, complete_video, topic_slug, write_package
+from edu.scripts.script_gen import OLLAMA_ATTEMPTS, GroundingError
 from edu.sources.http import client_headers
 from edu.tests.support import load_fixture, source_handler
 
@@ -79,6 +81,128 @@ class RunVideoTests(unittest.TestCase):
                     ollama_client=ollama_client,
                     retrieved_at=RETRIEVED,
                 )
+
+    def test_fact_check_rejection_is_retried_until_a_script_passes(self) -> None:
+        calls = {"n": 0}
+
+        def fake_fact_check(*_args, **_kwargs) -> FactReport:
+            calls["n"] += 1
+            passed = calls["n"] > 1
+            return FactReport(
+                passed=passed,
+                blocked=not passed,
+                model="llama3.2",
+                fixture=False,
+                claims=[
+                    ClaimReport(
+                        id="hook",
+                        claim="The Moon is Earth's only natural satellite.",
+                        source_urls=["https://en.wikipedia.org/wiki/Moon"],
+                        source_text="The Moon is Earth's only natural satellite.",
+                        source_sentences=["The Moon is Earth's only natural satellite."],
+                        llm_supported=passed,
+                        llm_reason="supported" if passed else "added Imagine",
+                        rule_failures=[] if passed else ["name not in source: Imagine"],
+                        passed=passed,
+                    )
+                ],
+            )
+
+        def ollama_handler(_request: httpx.Request) -> httpx.Response:
+            script = load_fixture("ollama_script.json")
+            body = {"message": {"role": "assistant", "content": json.dumps(script)}}
+            return httpx.Response(200, json=body)
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            topics = root / "topics.csv"
+            topics.write_text(
+                "topic,angle,status\nWhy the Moon has phases,orbit,pending\n",
+                encoding="utf-8",
+            )
+            with httpx.Client(
+                transport=httpx.MockTransport(source_handler),
+                headers=client_headers(),
+            ) as source_client, httpx.Client(
+                transport=httpx.MockTransport(ollama_handler)
+            ) as ollama_client, patch(
+                "edu.scripts.run_video.fact_check",
+                side_effect=fake_fact_check,
+            ):
+                path = complete_video(
+                    "Why the Moon has phases",
+                    source_client=source_client,
+                    ollama_client=ollama_client,
+                    topics_path=topics,
+                    retrieved_at=RETRIEVED,
+                    out_path=root / "moon.json",
+                    report_path=root / "fact_report.json",
+                )
+            saved = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(calls["n"], 2)
+        self.assertTrue(saved["fact_check"]["passed"])
+
+    def test_exhausted_fact_check_budget_keeps_the_report(self) -> None:
+        calls = {"n": 0}
+
+        def always_fail(*_args, **_kwargs) -> FactReport:
+            calls["n"] += 1
+            return FactReport(
+                passed=False,
+                blocked=True,
+                model="llama3.2",
+                fixture=False,
+                claims=[
+                    ClaimReport(
+                        id="hook",
+                        claim="Imagine the Moon.",
+                        source_urls=["https://en.wikipedia.org/wiki/Moon"],
+                        source_text="The Moon is Earth's only natural satellite.",
+                        source_sentences=["The Moon is Earth's only natural satellite."],
+                        llm_supported=False,
+                        llm_reason="added Imagine",
+                        rule_failures=["name not in source: Imagine"],
+                        passed=False,
+                    )
+                ],
+            )
+
+        def ollama_handler(_request: httpx.Request) -> httpx.Response:
+            script = load_fixture("ollama_script.json")
+            body = {"message": {"role": "assistant", "content": json.dumps(script)}}
+            return httpx.Response(200, json=body)
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            topics = root / "topics.csv"
+            topics.write_text(
+                "topic,angle,status\nWhy the Moon has phases,orbit,pending\n",
+                encoding="utf-8",
+            )
+            report = root / "fact_report.json"
+            with httpx.Client(
+                transport=httpx.MockTransport(source_handler),
+                headers=client_headers(),
+            ) as source_client, httpx.Client(
+                transport=httpx.MockTransport(ollama_handler)
+            ) as ollama_client, patch(
+                "edu.scripts.run_video.fact_check",
+                side_effect=always_fail,
+            ):
+                with self.assertRaises(FactCheckError) as caught:
+                    complete_video(
+                        "Why the Moon has phases",
+                        source_client=source_client,
+                        ollama_client=ollama_client,
+                        topics_path=topics,
+                        retrieved_at=RETRIEVED,
+                        out_path=root / "moon.json",
+                        report_path=report,
+                    )
+            saved = json.loads(report.read_text(encoding="utf-8"))
+        self.assertIn("Imagine", str(caught.exception))
+        self.assertFalse(saved["passed"])
+        self.assertEqual(calls["n"], OLLAMA_ATTEMPTS)
 
 
 if __name__ == "__main__":

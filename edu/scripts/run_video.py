@@ -33,7 +33,7 @@ from edu.scripts.fact_check import (
 )
 from edu.scripts.pending import stage_pending
 from edu.scripts.render_reel import render_reel
-from edu.scripts.script_gen import GroundingError, generate_script
+from edu.scripts.script_gen import OLLAMA_ATTEMPTS, GroundingError, generate_script
 from edu.scripts.topic_picker import (
     TopicChoice,
     default_topics_path,
@@ -62,6 +62,7 @@ def build_package(
     topics_path: Path | None = None,
     retrieved_at: datetime | None = None,
     rng: random.Random | None = None,
+    correction: str | None = None,
 ) -> dict:
     config = niche or load_niche()
     choice: TopicChoice = pick_topic(topic, topics_path, rng=rng)
@@ -91,6 +92,7 @@ def build_package(
         niche=config,
         documents=documents,
         client=ollama_client,
+        correction=correction,
     )
     return {
         "niche": config.name,
@@ -134,34 +136,47 @@ def complete_video(
     report_path: Path | None = None,
     fact_llm: dict | None = None,
 ) -> Path:
-    """Generate a script, write fact_report.json, and keep the package only if it passes."""
+    """Generate a script, write fact_report.json, and keep the package only if it passes.
+
+    A failed fact check is sent back to the script generator. The loop stops
+    when a script passes or ``OLLAMA_ATTEMPTS`` runs are exhausted.
+    """
     config = niche or load_niche()
-    package = build_package(
-        topic,
-        source_client=source_client,
-        ollama_client=ollama_client,
-        niche=config,
-        topics_path=topics_path,
-        retrieved_at=retrieved_at,
-        rng=rng,
-    )
-    script, documents = package_parts(package)
-    report = fact_check(
-        script,
-        documents,
-        niche=config,
-        client=ollama_client,
-        llm_payload=fact_llm,
-    )
-    destination = out_path or default_output_path(str(package["topic"]))
-    report_destination = report_path or default_report_path(destination)
-    write_report(report, report_destination)
-    if not report.passed:
-        raise FactCheckError(
-            format_block_message(report) + f"\nReport: {report_destination}"
+    correction: str | None = None
+    report = None
+    report_destination: Path | None = None
+    for _attempt in range(OLLAMA_ATTEMPTS):
+        package = build_package(
+            topic,
+            source_client=source_client,
+            ollama_client=ollama_client,
+            niche=config,
+            topics_path=topics_path,
+            retrieved_at=retrieved_at,
+            rng=rng,
+            correction=correction,
         )
-    package["fact_check"] = {"passed": True, "report": report_destination.name}
-    return save_successful_package(package, destination, topics_path)
+        script, documents = package_parts(package)
+        report = fact_check(
+            script,
+            documents,
+            niche=config,
+            client=ollama_client,
+            llm_payload=fact_llm,
+        )
+        destination = out_path or default_output_path(str(package["topic"]))
+        report_destination = report_path or default_report_path(destination)
+        write_report(report, report_destination)
+        if report.passed:
+            package["fact_check"] = {"passed": True, "report": report_destination.name}
+            return save_successful_package(package, destination, topics_path)
+        correction = (
+            "Fact check rejected the script. "
+            "Use only words that appear in the cited source sentence.\n"
+            + format_block_message(report)
+        )
+    assert report is not None and report_destination is not None
+    raise FactCheckError(format_block_message(report) + f"\nReport: {report_destination}")
 
 
 def fixture_package_path() -> Path:

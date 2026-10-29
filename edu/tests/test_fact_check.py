@@ -14,7 +14,7 @@ from edu.niche import NicheConfig
 from edu.scripts.fact_check import FactCheckError, fact_check, package_parts
 from edu.scripts.fact_check import main as fact_main
 from edu.scripts.run_video import main as video_main
-from edu.scripts.script_gen import ReelScript
+from edu.scripts.script_gen import OLLAMA_ATTEMPTS, ReelScript
 from edu.sources.http import client_headers
 from edu.sources.model import SourceDocument
 from edu.tests.support import load_fixture, source_handler
@@ -232,7 +232,7 @@ class FactCheckTests(unittest.TestCase):
                 )
             self.assertEqual(code, 1)
             self.assertFalse(script_path.exists())
-            self.assertEqual(calls["n"], 1)
+            self.assertEqual(calls["n"], OLLAMA_ATTEMPTS)
             report = json.loads(report_path.read_text(encoding="utf-8"))
         self.assertFalse(report["passed"])
         self.assertTrue(report["blocked"])

@@ -57,6 +57,7 @@ class ScriptGenTests(unittest.TestCase):
             [DOCUMENT],
         )
         self.assertIn("Use only the source text", messages[0]["content"])
+        self.assertIn("cited source sentence", messages[0]["content"])
         self.assertIn("not a source", messages[0]["content"])
         user = messages[1]["content"]
         self.assertIn("The Moon is Earth's only natural satellite.", user)
@@ -212,6 +213,20 @@ class ScriptGenTests(unittest.TestCase):
             )
         self.assertEqual(calls["n"], 2)
         self.assertEqual(result.claims[0].source_url, DOCUMENT.url)
+
+    def test_words_outside_the_cited_sentence_are_rejected(self) -> None:
+        script = load_fixture("ollama_script.json")
+        script["beats"][0]["narration"] = "Imagine the Moon is Earth's only natural satellite."
+        with ollama_client(chat_with(script)) as client:
+            with self.assertRaises(GroundingError) as caught:
+                generate_script(
+                    "Why the Moon has phases",
+                    "",
+                    NICHE,
+                    [DOCUMENT],
+                    client,
+                )
+        self.assertIn("Imagine", str(caught.exception))
 
 
 if __name__ == "__main__":
