@@ -270,6 +270,7 @@ class FactCheckTests(unittest.TestCase):
                         str(report_path),
                         "--topics",
                         str(topics_path),
+                        "--no-render",
                         "--fact-fixture",
                         str(Path("edu/tests/fixtures/fact_llm_pass.json")),
                     ]

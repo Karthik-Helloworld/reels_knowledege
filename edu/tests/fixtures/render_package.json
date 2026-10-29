@@ -1,0 +1,42 @@
+{
+  "niche": "science & space facts",
+  "topic": "Black hole",
+  "angle": "A region where gravity is so strong that light cannot escape",
+  "sources": [
+    {
+      "title": "Black hole",
+      "text": "A Black hole is a region of space where gravity is so strong that nothing can escape. Light cannot leave the event horizon.",
+      "url": "https://en.wikipedia.org/wiki/Black_hole",
+      "license": "CC BY-SA 4.0",
+      "author": "Wikipedia contributors",
+      "retrieved_at": "2026-10-28T12:00:00Z"
+    }
+  ],
+  "source_failures": [],
+  "script": {
+    "topic": "Black hole",
+    "hook": "A Black hole is a region of space where gravity is so strong that nothing can escape.",
+    "beats": [
+      {
+        "narration": "A Black hole is a region of space where gravity is so strong that nothing can escape.",
+        "on_screen": "gravity",
+        "source_url": "https://en.wikipedia.org/wiki/Black_hole"
+      },
+      {
+        "narration": "Light cannot leave the event horizon.",
+        "on_screen": "event horizon",
+        "source_url": "https://en.wikipedia.org/wiki/Black_hole"
+      }
+    ],
+    "closing": "Light cannot leave the event horizon.",
+    "key_takeaway": "A Black hole is a region of space where gravity is so strong that nothing can escape.",
+    "cta": "Follow for another science fact.",
+    "claims": [
+      {
+        "text": "A Black hole is a region of space where gravity is so strong that nothing can escape.",
+        "source_url": "https://en.wikipedia.org/wiki/Black_hole",
+        "source_sentence": "A Black hole is a region of space where gravity is so strong that nothing can escape."
+      }
+    ]
+  }
+}

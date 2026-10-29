@@ -14,6 +14,12 @@
             "nasa_id": "PIA12235",
             "secondary_creator": "NASA/JPL"
           }
+        ],
+        "links": [
+          {
+            "href": "https://images-assets.nasa.gov/image/PIA12235/PIA12235~thumb.jpg",
+            "rel": "preview"
+          }
         ]
       }
     ]

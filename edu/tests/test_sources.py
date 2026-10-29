@@ -82,6 +82,10 @@ class SourceTests(unittest.TestCase):
         self.assertEqual(document.author, "NASA/JPL")
         self.assertEqual(document.license, "Public domain")
         self.assertIn("public domain", document.license.casefold())
+        self.assertEqual(
+            document.image_url,
+            "https://images-assets.nasa.gov/image/PIA12235/PIA12235~thumb.jpg",
+        )
 
     def test_openstax_parses_book_html(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
@@ -152,6 +156,10 @@ class SourceTests(unittest.TestCase):
         self.assertEqual(
             document.url,
             "https://commons.wikimedia.org/wiki/File:Full_Moon.jpg",
+        )
+        self.assertEqual(
+            document.image_url,
+            "https://upload.wikimedia.org/wikipedia/commons/full-moon.jpg",
         )
 
     def test_fetch_sources_keeps_niche_order(self) -> None:
