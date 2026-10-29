@@ -129,7 +129,30 @@ make edu-video TOPIC="Black hole"
 
 If fetch or Ollama is down, the command says so, fact-checks `edu/tests/fixtures/render_package.json` with `edu/tests/fixtures/render_llm_pass.json`, and renders that package. A failed fact check on a live script still stops the run and does not render. The fixture path does not mark a row in `edu/topics.csv` as used. No publisher login is required.
 
-Output, for that topic: `edu/out/black-hole.mp4` and `edu/out/black-hole.caption.txt`. `edu/out/` is gitignored.
+Output, for that topic: `edu/out/black-hole.mp4` and `edu/out/black-hole.caption.txt`. The same render is also copied into `edu/out/pending/` for review. `edu/out/` is gitignored.
+
+## Phase 4: review and the daily queue
+
+A finished render is not publishable. `make edu-video` copies it into `edu/out/pending/<id>/`:
+
+- `video.mp4`
+- `script.json`
+- `claims.json`
+- `fact_report.json`
+- `caption.txt`
+
+`make review` prints each pending item (the video path, the script, the claims, the fact report, and the caption) and asks you to approve, reject, or edit. Approve moves the bundle to `edu/out/approved/<id>/` and inserts a row in `edu/out/queue.sqlite` with `scheduled_at`. Reject moves it to `edu/out/rejected/<id>/` and does not insert a row. Edit changes `caption.txt` and leaves the video pending. Pending and rejected videos fail `can_publish`. This phase does not post to Instagram or YouTube.
+
+The queue schedules one approved video per day by default (`cadence_per_day: 1` in `edu/config/niche.yaml`). The first approval is scheduled at approval time. The next one waits 24 hours after the previous `scheduled_at`. Set `REVIEW_CADENCE_PER_DAY` or pass `--cadence-per-day` to change that. Two per day spaces approvals 12 hours apart.
+
+Without a TTY, pass `--decide`. Tests use that flag and never prompt.
+
+```bash
+make review
+make review ARGS="--decide approve --id black-hole"
+make review ARGS="--decide reject --id black-hole"
+make review ARGS="--decide edit --id black-hole --caption 'Revised caption'"
+```
 
 ## Mac install (MacBook Air M4, 16GB)
 

@@ -30,6 +30,7 @@ from edu.scripts.fact_check import (
     package_parts,
     write_report,
 )
+from edu.scripts.pending import stage_pending
 from edu.scripts.render_reel import render_reel
 from edu.scripts.script_gen import GroundingError, generate_script
 from edu.scripts.topic_picker import (
@@ -287,8 +288,22 @@ def main(argv: list[str] | None = None) -> int:
     except (RuntimeError, OSError) as exc:
         print(f"edu-video: {exc}", file=sys.stderr)
         return 1
+    try:
+        bundle = stage_pending(
+            path,
+            video,
+            caption,
+            args.report or default_report_path(path),
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(
+            f"edu-video: could not store the pending review bundle: {exc}",
+            file=sys.stderr,
+        )
+        return 1
     print(video)
     print(caption)
+    print(bundle)
     return 0
 
 

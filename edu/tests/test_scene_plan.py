@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import unittest
 import wave
@@ -166,12 +167,22 @@ class ScenePlanTests(unittest.TestCase):
             topics = Path(tmp) / "topics.csv"
             shutil.copyfile(Path("edu/topics.csv"), topics)
             before = topics.read_text(encoding="utf-8")
-            with patch(
+            video = Path(tmp) / "black-hole.mp4"
+            caption = Path(tmp) / "black-hole.caption.txt"
+            pending = Path(tmp) / "pending"
+
+            def fake_render(package_path: Path) -> tuple[Path, Path]:
+                del package_path
+                video.write_bytes(b"fake-mp4")
+                caption.write_text("Black hole\n")
+                return video, caption
+
+            with patch.dict(os.environ, {"EDU_PENDING_DIR": str(pending)}), patch(
                 "edu.scripts.run_video.complete_video",
                 side_effect=GroundingError("Ollama returned no JSON object"),
             ), patch(
                 "edu.scripts.run_video.render_reel",
-                return_value=(Path(tmp) / "black-hole.mp4", Path(tmp) / "black-hole.caption.txt"),
+                side_effect=fake_render,
             ) as render:
                 code = video_main(
                     [
@@ -187,6 +198,12 @@ class ScenePlanTests(unittest.TestCase):
                 )
             self.assertEqual(code, 0)
             render.assert_called_once()
+            bundle = pending / "black-hole"
+            self.assertTrue((bundle / "video.mp4").is_file())
+            self.assertTrue((bundle / "script.json").is_file())
+            self.assertTrue((bundle / "claims.json").is_file())
+            self.assertTrue((bundle / "fact_report.json").is_file())
+            self.assertTrue((bundle / "caption.txt").is_file())
             package = json.loads(out.read_text(encoding="utf-8"))
             self.assertEqual(package["topic"], "Black hole")
             self.assertTrue(package["fact_check"]["passed"])
