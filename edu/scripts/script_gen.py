@@ -25,7 +25,7 @@ SYSTEM_PROMPT = """You write a short educational reel script as JSON.
 Use only the source text the user provides. Do not add facts from anywhere else.
 The angle is only a hint. It is not a source. If the sources do not support it, ignore it.
 Every source_url must be copied exactly from one of the sources.
-Every claim's source_sentence must be copied verbatim from that source's text.
+Every claim's source_sentence must appear in that source's text. Capitalization may differ.
 The hook, each beat's narration, each on_screen line, the closing, the key_takeaway,
 and each claim text may use only words that appear in the cited source sentence.
 Copy that sentence. Do not add a word, a name, or a number that is not in it.
@@ -196,6 +196,14 @@ def normalize_ws(value: str) -> str:
     return " ".join(value.split())
 
 
+def sentence_in_source(sentence: str, source: str) -> bool:
+    """True when the citation is a case-insensitive substring of the source."""
+
+    needle = normalize_ws(sentence).casefold()
+    haystack = normalize_ws(source).casefold()
+    return bool(needle) and needle in haystack
+
+
 _WORD = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?|[A-Za-z]+(?:'[A-Za-z]+)?")
 
 
@@ -243,8 +251,7 @@ def assert_grounded(script: ReelScript, documents: list[SourceDocument]) -> None
             raise GroundingError(
                 f"claim cites a url that was not in the sources: {claim.source_url}"
             )
-        sentence = normalize_ws(claim.source_sentence)
-        if sentence not in normalize_ws(document.text):
+        if not sentence_in_source(claim.source_sentence, document.text):
             raise GroundingError(
                 f"source_sentence is not in the cited source: {claim.source_sentence}"
             )
