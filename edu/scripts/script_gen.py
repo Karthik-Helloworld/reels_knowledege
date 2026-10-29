@@ -1,8 +1,8 @@
 """Ask local Ollama for a reel script grounded in the fetched sources.
 
-The model must return JSON. Every beat has to cite a URL that was actually
-retrieved. This is not a fact checker: it only rejects scripts that point
-outside the source set or that do not match the JSON shape.
+The model must return JSON. Each claim cites a source URL and a sentence
+copied from that source. Malformed JSON is retried before the run fails.
+This is not a fact checker: it checks citations, not whether the claim is true.
 """
 
 from __future__ import annotations
@@ -16,14 +16,21 @@ from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 from edu.niche import NicheConfig
 from edu.sources.model import SourceDocument
 
+HOOK_MAX_CHARS = 140
+OLLAMA_ATTEMPTS = 3
+
 SYSTEM_PROMPT = """You write a short educational reel script as JSON.
 Use only the source text the user provides. Do not add facts from anywhere else.
 The angle is only a hint. It is not a source. If the sources do not support it, ignore it.
-Every beat's source_url must be copied exactly from one of the sources.
-If a source does not support a sentence, leave that sentence out.
+Every source_url must be copied exactly from one of the sources.
+Every claim's source_sentence must be copied verbatim from that source's text.
 Return one JSON object and nothing else, with this shape:
-{"topic":"...","hook":"...","beats":[{"narration":"...","on_screen":"...","source_url":"..."}],"closing":"..."}
-Write 3 beats when the sources support them. hook, narration, on_screen, and closing must be non-empty.
+{"topic":"...","hook":"...","beats":[{"narration":"...","on_screen":"...","source_url":"..."}],
+"closing":"...","key_takeaway":"...","cta":"...",
+"claims":[{"text":"...","source_url":"...","source_sentence":"..."}]}
+The hook must be at most 140 characters.
+key_takeaway is one sentence. cta is a short call to action.
+Write 3 beats when the sources support them. Include at least one claim.
 """
 
 
@@ -55,6 +62,30 @@ class ScriptBeat(BaseModel):
         return cleaned
 
 
+class ScriptClaim(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
+    source_url: str
+    source_sentence: str
+
+    @field_validator("text", "source_sentence")
+    @classmethod
+    def not_blank(cls, value: str) -> str:
+        cleaned = " ".join(value.split())
+        if not cleaned:
+            raise ValueError("must not be blank")
+        return cleaned
+
+    @field_validator("source_url")
+    @classmethod
+    def http_url(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned.startswith(("http://", "https://")):
+            raise ValueError("source_url must be an http(s) url")
+        return cleaned
+
+
 class ReelScript(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -62,13 +93,26 @@ class ReelScript(BaseModel):
     hook: str
     beats: list[ScriptBeat]
     closing: str
+    key_takeaway: str
+    cta: str
+    claims: list[ScriptClaim]
 
-    @field_validator("topic", "hook", "closing")
+    @field_validator("topic", "closing", "key_takeaway", "cta")
     @classmethod
     def not_blank(cls, value: str) -> str:
         cleaned = " ".join(value.split())
         if not cleaned:
             raise ValueError("must not be blank")
+        return cleaned
+
+    @field_validator("hook")
+    @classmethod
+    def hook_cap(cls, value: str) -> str:
+        cleaned = " ".join(value.split())
+        if not cleaned:
+            raise ValueError("must not be blank")
+        if len(cleaned) > HOOK_MAX_CHARS:
+            raise ValueError(f"hook must be at most {HOOK_MAX_CHARS} characters")
         return cleaned
 
     @field_validator("beats")
@@ -77,6 +121,13 @@ class ReelScript(BaseModel):
         if not 1 <= len(beats) <= 6:
             raise ValueError("need 1 to 6 beats")
         return beats
+
+    @field_validator("claims")
+    @classmethod
+    def claim_count(cls, claims: list[ScriptClaim]) -> list[ScriptClaim]:
+        if not claims:
+            raise ValueError("need at least one claim")
+        return claims
 
 
 def build_messages(
@@ -114,14 +165,29 @@ def build_messages(
     ]
 
 
+def normalize_ws(value: str) -> str:
+    return " ".join(value.split())
+
+
 def assert_grounded(script: ReelScript, documents: list[SourceDocument]) -> None:
-    allowed = {document.url for document in documents}
-    if not allowed:
+    by_url = {document.url: document for document in documents}
+    if not by_url:
         raise GroundingError("no sources to ground the script")
     for beat in script.beats:
-        if beat.source_url not in allowed:
+        if beat.source_url not in by_url:
             raise GroundingError(
                 f"beat cites a url that was not in the sources: {beat.source_url}"
+            )
+    for claim in script.claims:
+        document = by_url.get(claim.source_url)
+        if document is None:
+            raise GroundingError(
+                f"claim cites a url that was not in the sources: {claim.source_url}"
+            )
+        sentence = normalize_ws(claim.source_sentence)
+        if sentence not in normalize_ws(document.text):
+            raise GroundingError(
+                f"source_sentence is not in the cited source: {claim.source_sentence}"
             )
 
 
@@ -190,9 +256,16 @@ def generate_script(
     if not documents:
         raise GroundingError("no sources to ground the script")
     messages = build_messages(topic, angle, niche, documents)
-    payload = ollama_chat(client, niche.ollama_host, niche.ollama_model, messages)
-    script = script_from_payload(payload)
-    if script.topic.casefold() != topic.strip().casefold():
-        raise GroundingError("script topic does not match the requested topic")
-    assert_grounded(script, documents)
-    return script
+    last_error: GroundingError | None = None
+    for _attempt in range(OLLAMA_ATTEMPTS):
+        try:
+            payload = ollama_chat(client, niche.ollama_host, niche.ollama_model, messages)
+            script = script_from_payload(payload)
+            if script.topic.casefold() != topic.strip().casefold():
+                raise GroundingError("script topic does not match the requested topic")
+            assert_grounded(script, documents)
+            return script
+        except GroundingError as exc:
+            last_error = exc
+    assert last_error is not None
+    raise last_error

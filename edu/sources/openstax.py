@@ -11,7 +11,7 @@ from datetime import datetime
 
 import httpx
 
-from edu.sources.http import read_json
+from edu.sources.http import read_json, request_with_retry
 from edu.sources.model import SourceDocument
 from edu.sources.text import html_to_text
 
@@ -42,7 +42,9 @@ def _search_books(
     if not query:
         return []
     payload = read_json(
-        client.get(
+        request_with_retry(
+            client,
+            "GET",
             OPENSTAX_PAGES,
             params={
                 "type": "books.Book",

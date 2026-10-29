@@ -19,7 +19,12 @@ import httpx
 from core.utils import ensure_parent, repo_root
 from edu.niche import NicheConfig, load_niche, niche_path
 from edu.scripts.script_gen import GroundingError, generate_script
-from edu.scripts.topic_picker import TopicChoice, default_topics_path, pick_topic
+from edu.scripts.topic_picker import (
+    TopicChoice,
+    default_topics_path,
+    mark_topic_used,
+    pick_topic,
+)
 from edu.sources import fetch_sources
 from edu.sources.http import SourceError, make_client
 
@@ -46,15 +51,25 @@ def build_package(
     config = niche or load_niche()
     choice: TopicChoice = pick_topic(topic, topics_path, rng=rng)
     stamp = retrieved_at or datetime.now(timezone.utc)
-    documents = fetch_sources(
+    fetched = fetch_sources(
         choice.topic,
         config.sources,
         source_client,
         stamp,
         openstax_query=config.openstax_query,
     )
+    for failure in fetched.failures:
+        print(
+            f"edu-video: {failure.source} is down: {failure.message}",
+            file=sys.stderr,
+        )
+    documents = fetched.documents
     if not documents:
-        raise GroundingError(f"no sources returned for {choice.topic}")
+        detail = "; ".join(f"{item.source}: {item.message}" for item in fetched.failures)
+        message = f"no sources returned for {choice.topic}"
+        if detail:
+            message = f"{message}. {detail}"
+        raise GroundingError(message)
     script = generate_script(
         topic=choice.topic,
         angle=choice.angle,
@@ -67,6 +82,10 @@ def build_package(
         "topic": choice.topic,
         "angle": choice.angle,
         "sources": [document.model_dump(mode="json") for document in documents],
+        "source_failures": [
+            {"source": failure.source, "message": failure.message}
+            for failure in fetched.failures
+        ],
         "script": script.model_dump(mode="json"),
     }
 
@@ -74,6 +93,16 @@ def build_package(
 def write_package(package: dict, path: Path) -> Path:
     ensure_parent(path)
     path.write_text(json.dumps(package, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def save_successful_package(
+    package: dict,
+    destination: Path,
+    topics_path: Path | None = None,
+) -> Path:
+    path = write_package(package, destination)
+    mark_topic_used(str(package["topic"]), topics_path)
     return path
 
 
@@ -85,7 +114,7 @@ def write_video_package(topic: str | None, *, out_path: Path | None = None) -> P
             ollama_client=ollama_client,
         )
     destination = out_path or default_output_path(str(package["topic"]))
-    return write_package(package, destination)
+    return save_successful_package(package, destination)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -109,7 +138,11 @@ def main(argv: list[str] | None = None) -> int:
                     topics_path=args.topics or default_topics_path(),
                 )
             destination = args.out or default_output_path(str(package["topic"]))
-            path = write_package(package, destination)
+            path = save_successful_package(
+                package,
+                destination,
+                args.topics or default_topics_path(),
+            )
         else:
             path = write_video_package(args.topic, out_path=args.out)
     except httpx.ConnectError as exc:

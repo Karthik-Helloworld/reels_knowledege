@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 import httpx
 
-from edu.sources.http import read_json
+from edu.sources.http import read_json, request_with_retry
 from edu.sources.model import SourceDocument
 from edu.sources.text import html_to_text
 
@@ -22,7 +23,9 @@ def fetch_wikimedia(
     if not query:
         return []
     payload = read_json(
-        client.get(
+        request_with_retry(
+            client,
+            "GET",
             COMMONS_API,
             params={
                 "action": "query",
@@ -62,6 +65,37 @@ def _file_title(title: str) -> str:
     return text.replace("_", " ").strip()
 
 
+def license_reusable(name: str) -> bool:
+    """True for CC0, CC BY, CC BY-SA, and public domain. NC/ND and reserved rights are not."""
+    folded = " ".join(name.casefold().replace("_", " ").split())
+    if any(
+        token in folded
+        for token in (
+            "noncommercial",
+            "non-commercial",
+            "no derivatives",
+            "all rights reserved",
+            "fair use",
+        )
+    ):
+        return False
+    if re.search(r"\b(?:nc|nd)\b", folded):
+        return False
+    if folded in {"cc by", "cc0", "pd", "public domain"}:
+        return True
+    return any(
+        folded == prefix or folded.startswith(prefix)
+        for prefix in (
+            "public domain",
+            "cc0",
+            "cc zero",
+            "creative commons zero",
+            "cc by-sa",
+            "cc by ",
+        )
+    )
+
+
 def _page_document(page: dict, retrieved_at: datetime) -> SourceDocument | None:
     infos = page.get("imageinfo") or []
     if not infos or not isinstance(infos[0], dict):
@@ -78,6 +112,8 @@ def _page_document(page: dict, retrieved_at: datetime) -> SourceDocument | None:
     if url.startswith("//"):
         url = "https:" + url
     if not title or not text or not license_name or not author or not url:
+        return None
+    if not license_reusable(license_name):
         return None
     return SourceDocument(
         title=title,

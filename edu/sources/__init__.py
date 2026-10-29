@@ -2,17 +2,31 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 
 import httpx
 
+from edu.sources.http import SourceError
 from edu.sources.model import SourceDocument
 from edu.sources.nasa import fetch_nasa
 from edu.sources.openstax import fetch_openstax
-from edu.sources.wikipedia import fetch_wikipedia
 from edu.sources.wikimedia import fetch_wikimedia
+from edu.sources.wikipedia import fetch_wikipedia
 
 ADAPTERS = ("wikipedia", "nasa", "openstax", "wikimedia")
+
+
+@dataclass(frozen=True)
+class SourceFailure:
+    source: str
+    message: str
+
+
+@dataclass(frozen=True)
+class FetchResult:
+    documents: list[SourceDocument]
+    failures: list[SourceFailure]
 
 
 def fetch_sources(
@@ -22,24 +36,28 @@ def fetch_sources(
     retrieved_at: datetime,
     *,
     openstax_query: str | None = None,
-) -> list[SourceDocument]:
+) -> FetchResult:
     documents: list[SourceDocument] = []
+    failures: list[SourceFailure] = []
     for name in source_names:
-        if name == "wikipedia":
-            documents.extend(fetch_wikipedia(topic, client, retrieved_at))
-        elif name == "nasa":
-            documents.extend(fetch_nasa(topic, client, retrieved_at))
-        elif name == "openstax":
-            documents.extend(
-                fetch_openstax(
+        try:
+            if name == "wikipedia":
+                found = fetch_wikipedia(topic, client, retrieved_at)
+            elif name == "nasa":
+                found = fetch_nasa(topic, client, retrieved_at)
+            elif name == "openstax":
+                found = fetch_openstax(
                     topic,
                     client,
                     retrieved_at,
                     fallback_query=openstax_query,
                 )
-            )
-        elif name == "wikimedia":
-            documents.extend(fetch_wikimedia(topic, client, retrieved_at))
-        else:
-            raise ValueError(f"unknown source: {name}")
-    return documents
+            elif name == "wikimedia":
+                found = fetch_wikimedia(topic, client, retrieved_at)
+            else:
+                raise ValueError(f"unknown source: {name}")
+        except SourceError as exc:
+            failures.append(SourceFailure(name, str(exc)))
+            continue
+        documents.extend(found)
+    return FetchResult(documents, failures)

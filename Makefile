@@ -24,5 +24,6 @@ edu-video:
 edu-test:
 	@python=$$(test -x $(PYTHON) && echo $(PYTHON) || echo python3); \
 	$$python -m unittest discover -s core/tests -t . -v; \
-	$$python -m unittest discover -s edu/tests -t . -v
+	$$python -m unittest discover -s edu/tests -t . -v; \
+	$$python -m ruff check edu
 	cd core && npx tsc --noEmit

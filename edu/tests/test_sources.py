@@ -1,16 +1,17 @@
 import unittest
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 import httpx
 
 from edu.sources import fetch_sources
-from edu.sources.http import client_headers, make_client
+from edu.sources.http import client_headers, make_client, request_with_retry
 from edu.sources.model import SourceDocument
-from edu.sources.nasa import NASA_LICENSE, fetch_nasa
+from edu.sources.nasa import fetch_nasa
 from edu.sources.openstax import fetch_openstax
 from edu.sources.text import html_to_text
-from edu.sources.wikipedia import fetch_wikipedia
 from edu.sources.wikimedia import fetch_wikimedia
+from edu.sources.wikipedia import fetch_wikipedia
 from edu.tests.support import load_fixture, source_handler
 
 RETRIEVED = datetime(2026, 10, 28, 12, 0, tzinfo=timezone.utc)
@@ -79,7 +80,7 @@ class SourceTests(unittest.TestCase):
         self.assertEqual(document.title, "Nearside of the Moon")
         self.assertEqual(document.url, "https://images.nasa.gov/details/PIA12235")
         self.assertEqual(document.author, "NASA/JPL")
-        self.assertEqual(document.license, NASA_LICENSE)
+        self.assertEqual(document.license, "Public domain")
         self.assertIn("public domain", document.license.casefold())
 
     def test_openstax_parses_book_html(self) -> None:
@@ -155,13 +156,15 @@ class SourceTests(unittest.TestCase):
 
     def test_fetch_sources_keeps_niche_order(self) -> None:
         with mock_client() as client:
-            documents = fetch_sources(
+            fetched = fetch_sources(
                 "Why the Moon has phases",
                 ("wikipedia", "nasa", "openstax", "wikimedia"),
                 client,
                 RETRIEVED,
                 openstax_query="astronomy",
             )
+        self.assertEqual(fetched.failures, [])
+        documents = fetched.documents
         self.assertEqual(
             [document.title for document in documents],
             ["Moon", "Nearside of the Moon", "Astronomy 2e", "Full Moon"],
@@ -173,6 +176,105 @@ class SourceTests(unittest.TestCase):
             self.assertTrue(document.license)
             self.assertTrue(document.author)
             self.assertEqual(document.retrieved_at, RETRIEVED)
+
+    def test_nasa_skips_terms_that_are_not_public_domain(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.host == "images-assets.nasa.gov":
+                nasa_id = request.url.path.split("/")[2]
+                terms = "Public domain" if nasa_id == "PD1" else "Creative Commons Attribution 4.0"
+                return httpx.Response(200, json={"XMP:UsageTerms": terms})
+            if request.url.path.startswith("/metadata/"):
+                nasa_id = request.url.path.rsplit("/", 1)[-1]
+                return httpx.Response(
+                    200,
+                    json={"location": f"https://images-assets.nasa.gov/image/{nasa_id}/metadata.json"},
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "collection": {
+                        "items": [
+                            {
+                                "data": [
+                                    {
+                                        "title": "Restricted",
+                                        "description": "A copyrighted frame.",
+                                        "nasa_id": "CCBY1",
+                                    }
+                                ]
+                            },
+                            {
+                                "data": [
+                                    {
+                                        "title": "Free frame",
+                                        "description": "A public-domain frame.",
+                                        "nasa_id": "PD1",
+                                        "secondary_creator": "NASA",
+                                    }
+                                ]
+                            },
+                        ]
+                    }
+                },
+            )
+
+        with mock_client(handler) as client:
+            documents = fetch_nasa("Moon", client, RETRIEVED)
+        self.assertEqual([document.title for document in documents], ["Free frame"])
+        self.assertEqual(documents[0].license, "Public domain")
+
+    def test_retries_a_server_error_then_succeeds(self) -> None:
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            if calls["n"] < 3:
+                return httpx.Response(502, json={"error": "down"})
+            return httpx.Response(200, json={"ok": True})
+
+        slept: list[float] = []
+        with mock_client(handler) as client, patch(
+            "edu.sources.http.time.sleep",
+            side_effect=lambda delay: slept.append(delay),
+        ):
+            response = request_with_retry(client, "GET", "https://example.com/item")
+        self.assertEqual(response.json()["ok"], True)
+        self.assertEqual(calls["n"], 3)
+        self.assertEqual(slept, [0.25, 0.5])
+
+    def test_does_not_retry_a_client_error(self) -> None:
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            return httpx.Response(404, json={"error": "missing"})
+
+        with mock_client(handler) as client:
+            response = request_with_retry(client, "GET", "https://example.com/missing")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(calls["n"], 1)
+
+    def test_one_down_source_does_not_drop_the_others(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.host == "en.wikipedia.org":
+                return httpx.Response(503, json={"error": "down"})
+            return source_handler(request)
+
+        with mock_client(handler) as client, patch("edu.sources.http.time.sleep"):
+            fetched = fetch_sources(
+                "Why the Moon has phases",
+                ("wikipedia", "nasa", "openstax", "wikimedia"),
+                client,
+                RETRIEVED,
+                openstax_query="astronomy",
+            )
+        self.assertEqual(
+            [document.title for document in fetched.documents],
+            ["Nearside of the Moon", "Astronomy 2e", "Full Moon"],
+        )
+        self.assertEqual(len(fetched.failures), 1)
+        self.assertEqual(fetched.failures[0].source, "wikipedia")
+        self.assertIn("503", fetched.failures[0].message)
 
 
 if __name__ == "__main__":

@@ -10,7 +10,8 @@
             "extmetadata": {
               "ObjectName": {"value": "No license"},
               "ImageDescription": {"value": "A file with no license."},
-              "Artist": {"value": "Pat"}
+              "Artist": {"value": "Pat"},
+              "LicenseShortName": {"value": "CC BY-NC 4.0"}
             }
           }
         ]

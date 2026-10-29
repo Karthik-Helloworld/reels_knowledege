@@ -21,7 +21,14 @@ def source_handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json=load_fixture("wikipedia_summary.json"))
         return httpx.Response(200, json=load_fixture("wikipedia_search.json"))
     if host == "images-api.nasa.gov":
+        if request.url.path.startswith("/metadata/"):
+            return httpx.Response(
+                200,
+                json={"location": "https://images-assets.nasa.gov/image/PIA12235/metadata.json"},
+            )
         return httpx.Response(200, json=load_fixture("nasa_search.json"))
+    if host == "images-assets.nasa.gov":
+        return httpx.Response(200, json={"XMP:UsageTerms": "Public domain"})
     if host == "openstax.org":
         search = request.url.params.get("search", "")
         if search.casefold() == "astronomy":

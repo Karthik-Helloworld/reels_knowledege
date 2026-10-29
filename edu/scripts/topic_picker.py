@@ -15,6 +15,7 @@ from core.utils import repo_root
 class TopicChoice:
     topic: str
     angle: str
+    status: str = "pending"
 
 
 def default_topics_path() -> Path:
@@ -31,7 +32,8 @@ def load_topics(path: Path | None = None) -> list[TopicChoice]:
         if not topic:
             continue
         angle = str(row.get("angle") or "").strip()
-        choices.append(TopicChoice(topic, angle))
+        status = str(row.get("status") or "pending").strip().casefold() or "pending"
+        choices.append(TopicChoice(topic, angle, status))
     if not choices:
         raise ValueError(f"no topics in {csv_path}")
     return choices
@@ -48,9 +50,37 @@ def pick_topic(
         for choice in choices:
             if choice.topic.casefold() == text.casefold():
                 return choice
-        return TopicChoice(text, "")
+        return TopicChoice(text, "", "pending")
+    pending = [choice for choice in choices if choice.status == "pending"]
+    if not pending:
+        raise ValueError(f"no pending topics in {path or default_topics_path()}")
     picker = rng or random.Random()
-    return picker.choice(choices)
+    return picker.choice(pending)
+
+
+def mark_topic_used(topic: str, path: Path | None = None) -> bool:
+    """Mark a catalog row used. Returns False when the topic is not in the file."""
+    csv_path = path or default_topics_path()
+    with csv_path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        fieldnames = list(reader.fieldnames or [])
+        rows = list(reader)
+    if "status" not in fieldnames:
+        fieldnames.append("status")
+    changed = False
+    for row in rows:
+        if str(row.get("topic") or "").strip().casefold() != topic.strip().casefold():
+            continue
+        row["status"] = "used"
+        changed = True
+    if not changed:
+        return False
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({name: row.get(name, "") for name in fieldnames})
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:

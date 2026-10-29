@@ -49,14 +49,16 @@ Python tests cover TTS, captions, and the theme constants in `core/utils.py`. `m
 
 The default niche in `edu/config/niche.yaml` is `science & space facts`.
 
-`make edu-video` resolves a topic, fetches one record from each source, and asks local Ollama for a short JSON script. Every beat must cite a URL that was just retrieved. The angle in `edu/topics.csv` is a hint, not a source.
+`make edu-video` resolves a topic, fetches one record from each source, and asks local Ollama for a short JSON script. The script includes a hook of at most 140 characters, a key takeaway, a call to action, and `claims`. Each claim has `text`, `source_url`, and `source_sentence`. `source_sentence` has to be copied from the cited source text. The angle in `edu/topics.csv` is a hint, not a source. `topics.csv` has a `status` column. A blank topic picks a `pending` row, and a successful package marks that row `used`.
 
 Sources, each stored as title, text, url, license, author, and retrieved_at:
 
-- Wikipedia, found by search, then the REST summary. License `CC BY-SA 4.0`.
-- NASA Image and Video Library. No API key.
+- Wikipedia, found by search, then the REST summary. Article text is `CC BY-SA 4.0`.
+- NASA Image and Video Library. No API key. The license is the asset's own usage terms. Only public-domain and CC0 items are kept.
 - OpenStax books. The text is the book description. If the topic matches no title, the niche searches `astronomy`.
-- Wikimedia Commons. License and author come from the file metadata.
+- Wikimedia Commons. License and author come from the file metadata. Files are kept only when the license allows reuse (`CC0`, `CC BY`, `CC BY-SA`, or public domain).
+
+If one source is down, the others are still used. A source HTTP call retries twice with backoff on connection errors and 5xx responses. A bad Ollama JSON response is retried twice before the run fails.
 
 ```bash
 make edu-setup

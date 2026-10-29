@@ -1,4 +1,8 @@
-"""NASA Image and Video Library search. No API key."""
+"""NASA Image and Video Library search. No API key.
+
+Rights come from each asset's metadata (`XMP:UsageTerms` and related fields).
+Items are kept only when those terms are public domain or CC0.
+"""
 
 from __future__ import annotations
 
@@ -7,12 +11,16 @@ from datetime import datetime
 
 import httpx
 
-from edu.sources.http import read_json
+from edu.sources.http import SourceError, read_json, request_with_retry
 from edu.sources.model import SourceDocument
 
 NASA_SEARCH = "https://images-api.nasa.gov/search"
-NASA_LICENSE = (
-    "NASA Image and Video Library (public domain unless the record states otherwise)"
+NASA_METADATA = "https://images-api.nasa.gov/metadata/"
+_RIGHTS_KEYS = (
+    "XMP:UsageTerms",
+    "XMP:Rights",
+    "IPTC:CopyrightNotice",
+    "EXIF:Copyright",
 )
 
 
@@ -25,12 +33,15 @@ def fetch_nasa(
     if not query:
         return []
     payload = read_json(
-        client.get(
+        request_with_retry(
+            client,
+            "GET",
             NASA_SEARCH,
             params={"q": query, "media_type": "image", "page_size": "5"},
         )
     )
     items = ((payload.get("collection") or {}).get("items")) or []
+    metadata_errors: list[SourceError] = []
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -42,6 +53,13 @@ def fetch_nasa(
         title = str(data.get("title") or "").strip()
         text = str(data.get("description") or data.get("description_508") or "").strip()
         if not nasa_id or not title or not text:
+            continue
+        try:
+            terms = _usage_terms(client, nasa_id)
+        except SourceError as exc:
+            metadata_errors.append(exc)
+            continue
+        if not _public_domain_or_cc0(terms):
             continue
         author = str(
             data.get("secondary_creator")
@@ -55,9 +73,46 @@ def fetch_nasa(
                 title=title,
                 text=text,
                 url=f"https://images.nasa.gov/details/{quoted_id}",
-                license=NASA_LICENSE,
+                license=terms,
                 author=author,
                 retrieved_at=retrieved_at,
             )
         ]
+    if metadata_errors:
+        raise metadata_errors[-1]
     return []
+
+
+def _usage_terms(client: httpx.Client, nasa_id: str) -> str:
+    quoted = urllib.parse.quote(nasa_id, safe="")
+    pointer = read_json(request_with_retry(client, "GET", NASA_METADATA + quoted))
+    location = str(pointer.get("location") or "").strip()
+    if not location:
+        return ""
+    meta = read_json(request_with_retry(client, "GET", location))
+    chunks: list[str] = []
+    for key in _RIGHTS_KEYS:
+        value = str(meta.get(key) or "").strip()
+        if value and value not in chunks:
+            chunks.append(value)
+    return "\n".join(chunks)
+
+
+def _public_domain_or_cc0(terms: str) -> bool:
+    folded = terms.casefold()
+    if not folded:
+        return False
+    if any(
+        phrase in folded
+        for phrase in (
+            "all rights reserved",
+            "non-commercial",
+            "noncommercial",
+            "no derivatives",
+        )
+    ):
+        return False
+    return any(
+        phrase in folded
+        for phrase in ("public domain", "cc0", "creative commons zero", "cc zero")
+    )

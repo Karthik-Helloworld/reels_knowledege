@@ -145,6 +145,73 @@ class ScriptGenTests(unittest.TestCase):
             with self.assertRaises(GroundingError):
                 generate_script("Why the Moon has phases", "", NICHE, [], client)
 
+    def test_source_sentence_must_be_in_the_cited_text(self) -> None:
+        script = load_fixture("ollama_script.json")
+        script["claims"][0]["source_sentence"] = "The Moon controls the tides."
+        with ollama_client(chat_with(script)) as client:
+            with self.assertRaises(GroundingError) as caught:
+                generate_script(
+                    "Why the Moon has phases",
+                    "",
+                    NICHE,
+                    [DOCUMENT],
+                    client,
+                )
+        self.assertIn("source_sentence", str(caught.exception))
+
+    def test_source_sentence_ignores_extra_whitespace(self) -> None:
+        script = load_fixture("ollama_script.json")
+        script["claims"][0]["source_sentence"] = "The   Moon is Earth's only natural satellite."
+        with ollama_client(chat_with(script)) as client:
+            result = generate_script(
+                "Why the Moon has phases",
+                "",
+                NICHE,
+                [DOCUMENT],
+                client,
+            )
+        self.assertEqual(
+            result.claims[0].source_sentence,
+            "The Moon is Earth's only natural satellite.",
+        )
+
+    def test_hook_longer_than_140_characters_is_rejected(self) -> None:
+        script = load_fixture("ollama_script.json")
+        script["hook"] = "A" * 141
+        with ollama_client(chat_with(script)) as client:
+            with self.assertRaises(GroundingError) as caught:
+                generate_script(
+                    "Why the Moon has phases",
+                    "",
+                    NICHE,
+                    [DOCUMENT],
+                    client,
+                )
+        self.assertIn("140", str(caught.exception))
+
+    def test_malformed_json_is_retried(self) -> None:
+        calls = {"n": 0}
+        script = load_fixture("ollama_script.json")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                content = "not-json"
+            else:
+                content = json.dumps(script)
+            return httpx.Response(200, json={"message": {"role": "assistant", "content": content}})
+
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            result = generate_script(
+                "Why the Moon has phases",
+                "",
+                NICHE,
+                [DOCUMENT],
+                client,
+            )
+        self.assertEqual(calls["n"], 2)
+        self.assertEqual(result.claims[0].source_url, DOCUMENT.url)
+
 
 if __name__ == "__main__":
     unittest.main()
