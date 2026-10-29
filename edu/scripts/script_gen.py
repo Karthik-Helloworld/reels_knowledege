@@ -205,6 +205,7 @@ def sentence_in_source(sentence: str, source: str) -> bool:
 
 
 _WORD = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?|[A-Za-z]+(?:'[A-Za-z]+)?")
+_FUNCTION_WORDS = frozenset({"a", "an", "the"})
 
 
 def _plain(value: str) -> str:
@@ -221,7 +222,10 @@ def content_words(value: str) -> list[str]:
 
 
 def unsupported_words(text: str, support: str) -> list[str]:
-    """Words in ``text`` that do not appear in the cited source sentence."""
+    """Words in ``text`` that do not appear in the cited source sentence.
+
+    The articles a, an, and the are ignored. Every other word must be in the source.
+    """
 
     allowed = set(content_words(support))
     extra: list[str] = []
@@ -229,7 +233,7 @@ def unsupported_words(text: str, support: str) -> list[str]:
     for match in _WORD.finditer(_plain(text)):
         word = match.group(0).replace(",", "")
         key = word.casefold()
-        if key in allowed or key in seen:
+        if key in _FUNCTION_WORDS or key in allowed or key in seen:
             continue
         seen.add(key)
         extra.append(word)

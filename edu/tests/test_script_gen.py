@@ -12,6 +12,7 @@ from edu.scripts.script_gen import (
     build_messages,
     generate_script,
     sentence_in_source,
+    unsupported_words,
 )
 from edu.sources.model import SourceDocument
 from edu.tests.support import load_fixture
@@ -250,6 +251,36 @@ class ScriptGenTests(unittest.TestCase):
             with self.assertRaises(GroundingError) as caught:
                 generate_script("Black hole", "", NICHE, [document], client)
         self.assertIn("wormhole", str(caught.exception))
+
+    def test_articles_are_ignored_and_other_words_must_be_cited(self) -> None:
+        support = "sufficiently compact mass will form black hole"
+        self.assertEqual(unsupported_words("A black hole will form.", support), [])
+        self.assertEqual(unsupported_words("An black hole will form.", support), [])
+        self.assertEqual(unsupported_words("The black hole will form.", support), [])
+        self.assertEqual(unsupported_words("A wormhole will form.", support), ["wormhole"])
+        sentence = "Sufficiently compact mass will form black hole."
+        script = load_fixture("ollama_script.json")
+        script["topic"] = "Black hole"
+        script["hook"] = "A black hole will form."
+        script["closing"] = sentence
+        script["key_takeaway"] = sentence
+        script["beats"][0]["narration"] = sentence
+        script["beats"][0]["on_screen"] = "black hole"
+        script["beats"][0]["source_url"] = "https://en.wikipedia.org/wiki/Black_hole"
+        script["claims"][0]["text"] = sentence
+        script["claims"][0]["source_url"] = "https://en.wikipedia.org/wiki/Black_hole"
+        script["claims"][0]["source_sentence"] = sentence
+        document = SourceDocument(
+            title="Black hole",
+            text=sentence.casefold(),
+            url="https://en.wikipedia.org/wiki/Black_hole",
+            license="CC BY-SA 4.0",
+            author="Wikipedia contributors",
+            retrieved_at=RETRIEVED,
+        )
+        with ollama_client(chat_with(script)) as client:
+            result = generate_script("Black hole", "", NICHE, [document], client)
+        self.assertEqual(result.hook, "A black hole will form.")
 
     def test_hook_longer_than_140_characters_is_rejected(self) -> None:
         script = load_fixture("ollama_script.json")
