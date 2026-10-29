@@ -15,3 +15,5 @@ sources:
   - wikimedia
 # Approved videos are spaced on the queue. 1 means one video per day.
 cadence_per_day: 1
+# Reels send Instagram's is_ai_generated label. If that field is rejected, the caption gains a disclosure line.
+ai_disclosure: true

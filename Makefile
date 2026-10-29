@@ -1,6 +1,6 @@
 # Local educational video pipeline.
 
-.PHONY: edu-setup edu-render-hello edu-test edu-video review
+.PHONY: edu-setup edu-render-hello edu-test edu-video review publish
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
@@ -28,6 +28,10 @@ edu-video:
 review:
 	@python=$$(test -x $(PYTHON) && echo $(PYTHON) || echo python3); \
 	$$python -m edu.scripts.review $(ARGS)
+
+publish:
+	@python=$$(test -x $(PYTHON) && echo $(PYTHON) || echo python3); \
+	$$python -m edu.publish.run $(ARGS)
 
 edu-test:
 	@python=$$(test -x $(PYTHON) && echo $(PYTHON) || echo python3); \
