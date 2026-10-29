@@ -8,9 +8,11 @@ from edu.niche import NicheConfig
 from edu.scripts.fact_check import fact_check
 from edu.scripts.script_gen import (
     OLLAMA_ATTEMPTS,
+    VERBATIM_CORRECTION,
     GroundingError,
     ReelScript,
     build_messages,
+    copies_cited_sentence,
     generate_script,
     sentence_in_source,
     unsupported_words,
@@ -372,6 +374,83 @@ class ScriptGenTests(unittest.TestCase):
         self.assertIn("Imagine", result.beats[0].narration)
         self.assertEqual(result.claims[0].source_sentence, DOCUMENT.text)
         self.assertNotIn("Imagine", result.claims[0].source_sentence)
+
+    def test_a_paraphrase_is_not_treated_as_a_copy(self) -> None:
+        sentence = "The Moon is Earth's only natural satellite."
+        self.assertTrue(copies_cited_sentence(sentence, sentence))
+        self.assertTrue(
+            copies_cited_sentence(
+                "Imagine the Moon is Earth's only natural satellite.",
+                sentence,
+            )
+        )
+        self.assertFalse(copies_cited_sentence("The Moon orbits Earth.", sentence))
+        self.assertFalse(
+            copies_cited_sentence("Earth has one natural satellite.", sentence)
+        )
+
+    def test_verbatim_copy_is_retried_then_a_paraphrase_is_kept(self) -> None:
+        sentence = DOCUMENT.text
+        copied = load_fixture("ollama_script.json")
+        copied["hook"] = sentence
+        copied["beats"][0]["narration"] = sentence
+        copied["closing"] = sentence
+        copied["key_takeaway"] = sentence
+        copied["claims"][0]["text"] = sentence
+        paraphrase = load_fixture("ollama_script.json")
+        calls = {"n": 0}
+        seen: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            body = json.loads(request.content.decode())
+            seen.append(body["messages"][-1]["content"])
+            payload = copied if calls["n"] == 1 else paraphrase
+            return httpx.Response(
+                200,
+                json={"message": {"role": "assistant", "content": json.dumps(payload)}},
+            )
+
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            result = generate_script(
+                "Why the Moon has phases",
+                "",
+                NICHE,
+                [DOCUMENT],
+                client,
+            )
+        self.assertEqual(calls["n"], 2)
+        self.assertIn(VERBATIM_CORRECTION, seen[1])
+        self.assertEqual(result.hook, "The Moon orbits Earth.")
+        self.assertNotEqual(result.hook, result.claims[0].source_sentence)
+        self.assertNotEqual(result.claims[0].text, result.claims[0].source_sentence)
+
+    def test_verbatim_copy_is_kept_when_every_attempt_repeats_it(self) -> None:
+        sentence = DOCUMENT.text
+        copied = load_fixture("ollama_script.json")
+        copied["hook"] = sentence
+        copied["beats"][0]["narration"] = sentence
+        copied["claims"][0]["text"] = sentence
+        calls = {"n": 0}
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            return httpx.Response(
+                200,
+                json={"message": {"role": "assistant", "content": json.dumps(copied)}},
+            )
+
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            result = generate_script(
+                "Why the Moon has phases",
+                "",
+                NICHE,
+                [DOCUMENT],
+                client,
+            )
+        self.assertEqual(calls["n"], OLLAMA_ATTEMPTS)
+        self.assertEqual(result.hook, sentence)
+        self.assertEqual(result.claims[0].source_sentence, sentence)
 
     def test_tampered_date_still_blocks(self) -> None:
         script = load_fixture("ollama_script.json")

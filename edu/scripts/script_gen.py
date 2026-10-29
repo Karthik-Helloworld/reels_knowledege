@@ -3,9 +3,10 @@
 The model must return JSON. It does not write citation text. Each claim names
 the source URL and the ids of the numbered sentences that support it. This
 module copies those sentences in from the source. Hook, beats, closing, and
-claim text are the model's own wording. Malformed JSON and unknown sentence
-ids are retried before the run fails. Dates, numbers, and names are checked
-later by the fact checker, not here.
+claim text are the model's own wording. A line that repeats a cited sentence
+is sent back once so the model can rephrase; the last attempt is kept.
+Malformed JSON and unknown sentence ids are retried before the run fails.
+Dates, numbers, and names are checked later by the fact checker, not here.
 """
 
 from __future__ import annotations
@@ -318,6 +319,67 @@ def content_words(value: str) -> list[str]:
     return [match.group(0).casefold().replace(",", "") for match in _WORD.finditer(_plain(value))]
 
 
+VERBATIM_CORRECTION = (
+    "you copied the source verbatim — rephrase using different sentence structure"
+)
+
+
+def _contains_words(haystack: list[str], needle: list[str]) -> bool:
+    if not needle or len(needle) > len(haystack):
+        return False
+    width = len(needle)
+    for start in range(len(haystack) - width + 1):
+        if haystack[start : start + width] == needle:
+            return True
+    return False
+
+
+def copies_cited_sentence(text: str, sentence: str) -> bool:
+    """True when ``text`` repeats a cited sentence, or a long exact span of it."""
+
+    left = content_words(text)
+    right = content_words(sentence)
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    if len(right) >= 6 and _contains_words(left, right):
+        return True
+    return len(left) >= 6 and _contains_words(right, left)
+
+
+def verbatim_lines(script: ReelScript, documents: list[SourceDocument]) -> list[str]:
+    """Spoken lines that paste a cited source sentence instead of rephrasing."""
+
+    sentences: list[str] = []
+    for claim in script.claims:
+        sentences.extend(split_sentences(claim.source_sentence))
+    by_url = {document.url: document for document in documents}
+    for beat in script.beats:
+        document = by_url.get(beat.source_url)
+        if document is not None:
+            sentences.extend(split_sentences(document.text))
+    unique: list[str] = []
+    for sentence in sentences:
+        if sentence not in unique:
+            unique.append(sentence)
+    fields = [
+        ("hook", script.hook),
+        ("closing", script.closing),
+        ("key_takeaway", script.key_takeaway),
+    ]
+    for index, beat in enumerate(script.beats):
+        fields.append((f"beat-{index}", beat.narration))
+        fields.append((f"beat-{index} on-screen", beat.on_screen))
+    for index, claim in enumerate(script.claims):
+        fields.append((f"claim-{index}", claim.text))
+    copied: list[str] = []
+    for name, text in fields:
+        if any(copies_cited_sentence(text, sentence) for sentence in unique):
+            copied.append(name)
+    return copied
+
+
 def unsupported_words(text: str, support: str) -> list[str]:
     """Words in ``text`` that do not appear in the cited source sentence.
 
@@ -470,7 +532,7 @@ def generate_script(
         raise GroundingError("no sources to ground the script")
     messages = build_messages(topic, angle, niche, documents, correction=correction)
     last_error: GroundingError | None = None
-    for _attempt in range(OLLAMA_ATTEMPTS):
+    for attempt in range(OLLAMA_ATTEMPTS):
         try:
             payload = ollama_chat(
                 client,
@@ -483,6 +545,12 @@ def generate_script(
             if script.topic.casefold() != topic.strip().casefold():
                 raise GroundingError("script topic does not match the requested topic")
             assert_grounded(script, documents)
+            copied = verbatim_lines(script, documents)
+            # The last attempt is kept. A weak model must not block the video forever.
+            if copied and attempt + 1 < OLLAMA_ATTEMPTS:
+                raise GroundingError(
+                    VERBATIM_CORRECTION + " Copied lines: " + ", ".join(copied) + "."
+                )
             return script
         except GroundingError as exc:
             last_error = exc
