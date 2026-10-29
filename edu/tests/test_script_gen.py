@@ -60,8 +60,9 @@ class ScriptGenTests(unittest.TestCase):
             NICHE,
             [DOCUMENT],
         )
-        self.assertIn("Use only the source text", messages[0]["content"])
-        self.assertIn("cited source sentence", messages[0]["content"])
+        self.assertIn("numbered source sentences", messages[0]["content"])
+        self.assertIn("sentence_ids", messages[0]["content"])
+        self.assertIn("own words", messages[0]["content"])
         self.assertIn("not a source", messages[0]["content"])
         user = messages[1]["content"]
         self.assertIn("The Moon is Earth's only natural satellite.", user)
@@ -69,7 +70,8 @@ class ScriptGenTests(unittest.TestCase):
         self.assertIn("orbit hint", user)
         self.assertIn("science & space facts", user)
         self.assertIn("non-empty", messages[0]["content"])
-        self.assertIn("non-empty", user)
+        self.assertIn("sentence_ids", user)
+        self.assertIn('"id": "1"', user)
         schema = ReelScript.model_json_schema()
         for name in ("topic", "hook", "closing", "key_takeaway", "cta"):
             self.assertGreaterEqual(schema["properties"][name]["minLength"], 1)
@@ -98,8 +100,16 @@ class ScriptGenTests(unittest.TestCase):
         self.assertEqual(seen["body"]["model"], "llama3.2")
         self.assertEqual(seen["body"]["format"]["type"], "object")
         self.assertIn("claims", seen["body"]["format"]["required"])
+        claim_schema = seen["body"]["format"]["$defs"]["DraftClaim"]["properties"]
+        self.assertIn("sentence_ids", claim_schema)
+        self.assertNotIn("source_sentence", claim_schema)
+        self.assertGreaterEqual(claim_schema["sentence_ids"]["minItems"], 1)
         self.assertIs(seen["body"]["stream"], False)
         self.assertIn(DOCUMENT.text, seen["body"]["messages"][1]["content"])
+        self.assertEqual(
+            result.claims[0].source_sentence,
+            "The Moon is Earth's only natural satellite.",
+        )
 
     def test_fenced_json_still_parses(self) -> None:
         script = load_fixture("ollama_script.json")
@@ -162,9 +172,9 @@ class ScriptGenTests(unittest.TestCase):
             with self.assertRaises(GroundingError):
                 generate_script("Why the Moon has phases", "", NICHE, [], client)
 
-    def test_source_sentence_must_be_in_the_cited_text(self) -> None:
+    def test_fabricated_sentence_id_is_rejected(self) -> None:
         script = load_fixture("ollama_script.json")
-        script["claims"][0]["source_sentence"] = "The Moon controls the tides."
+        script["claims"][0]["sentence_ids"] = ["99"]
         with ollama_client(chat_with(script)) as client:
             with self.assertRaises(GroundingError) as caught:
                 generate_script(
@@ -174,23 +184,50 @@ class ScriptGenTests(unittest.TestCase):
                     [DOCUMENT],
                     client,
                 )
-        self.assertIn("source_sentence", str(caught.exception))
+        self.assertIn("99", str(caught.exception))
 
-    def test_source_sentence_ignores_extra_whitespace(self) -> None:
+    def test_claim_with_no_sentence_id_is_rejected(self) -> None:
         script = load_fixture("ollama_script.json")
-        script["claims"][0]["source_sentence"] = "The   Moon is Earth's only natural satellite."
+        script["claims"][0]["sentence_ids"] = []
+        with ollama_client(chat_with(script)) as client:
+            with self.assertRaises(GroundingError) as caught:
+                generate_script(
+                    "Why the Moon has phases",
+                    "",
+                    NICHE,
+                    [DOCUMENT],
+                    client,
+                )
+        self.assertIn("sentence", str(caught.exception).casefold())
+
+    def test_valid_sentence_id_copies_the_exact_source_sentence(self) -> None:
+        text = "Alpha is first. Beta is second."
+        script = load_fixture("ollama_script.json")
+        script["hook"] = "Here is the second line."
+        script["closing"] = "That was the second line."
+        script["key_takeaway"] = "Beta comes second."
+        script["beats"][0]["narration"] = "The second line names Beta."
+        script["beats"][0]["on_screen"] = "Beta"
+        script["claims"][0]["text"] = "Beta is the second sentence."
+        script["claims"][0]["sentence_ids"] = ["2"]
+        document = SourceDocument(
+            title="Moon",
+            text=text,
+            url=DOCUMENT.url,
+            license=DOCUMENT.license,
+            author=DOCUMENT.author,
+            retrieved_at=RETRIEVED,
+        )
         with ollama_client(chat_with(script)) as client:
             result = generate_script(
                 "Why the Moon has phases",
                 "",
                 NICHE,
-                [DOCUMENT],
+                [document],
                 client,
             )
-        self.assertEqual(
-            result.claims[0].source_sentence,
-            "The Moon is Earth's only natural satellite.",
-        )
+        self.assertEqual(result.claims[0].source_sentence, "Beta is second.")
+        self.assertNotEqual(result.claims[0].text, result.claims[0].source_sentence)
 
     def test_black_hole_sentence_matches_the_lowercase_extract(self) -> None:
         extract = (
@@ -208,9 +245,9 @@ class ScriptGenTests(unittest.TestCase):
         script["beats"][0]["narration"] = sentence
         script["beats"][0]["on_screen"] = "black hole"
         script["beats"][0]["source_url"] = "https://en.wikipedia.org/wiki/Black_hole"
-        script["claims"][0]["text"] = sentence
+        script["claims"][0]["text"] = "A compact mass can become a black hole."
         script["claims"][0]["source_url"] = "https://en.wikipedia.org/wiki/Black_hole"
-        script["claims"][0]["source_sentence"] = sentence
+        script["claims"][0]["sentence_ids"] = ["1"]
         document = SourceDocument(
             title="Black hole",
             text=extract,
@@ -221,9 +258,10 @@ class ScriptGenTests(unittest.TestCase):
         )
         with ollama_client(chat_with(script)) as client:
             result = generate_script("Black hole", "", NICHE, [document], client)
-        self.assertEqual(result.claims[0].source_sentence, sentence)
+        self.assertEqual(result.claims[0].source_sentence, extract)
+        self.assertNotEqual(result.claims[0].text, extract)
 
-    def test_claim_cannot_add_words_absent_from_the_source(self) -> None:
+    def test_original_wording_can_differ_from_the_cited_sentence(self) -> None:
         extract = (
             "predicts that any sufficiently compact mass will form a black hole."
         )
@@ -238,7 +276,7 @@ class ScriptGenTests(unittest.TestCase):
         script["beats"][0]["source_url"] = "https://en.wikipedia.org/wiki/Black_hole"
         script["claims"][0]["text"] = "Any sufficiently compact mass will form a wormhole."
         script["claims"][0]["source_url"] = "https://en.wikipedia.org/wiki/Black_hole"
-        script["claims"][0]["source_sentence"] = sentence
+        script["claims"][0]["sentence_ids"] = ["1"]
         document = SourceDocument(
             title="Black hole",
             text=extract,
@@ -248,9 +286,9 @@ class ScriptGenTests(unittest.TestCase):
             retrieved_at=RETRIEVED,
         )
         with ollama_client(chat_with(script)) as client:
-            with self.assertRaises(GroundingError) as caught:
-                generate_script("Black hole", "", NICHE, [document], client)
-        self.assertIn("wormhole", str(caught.exception))
+            result = generate_script("Black hole", "", NICHE, [document], client)
+        self.assertEqual(result.claims[0].source_sentence, extract)
+        self.assertIn("wormhole", result.claims[0].text)
 
     def test_articles_are_ignored_and_other_words_must_be_cited(self) -> None:
         support = "sufficiently compact mass will form black hole"
@@ -269,7 +307,7 @@ class ScriptGenTests(unittest.TestCase):
         script["beats"][0]["source_url"] = "https://en.wikipedia.org/wiki/Black_hole"
         script["claims"][0]["text"] = sentence
         script["claims"][0]["source_url"] = "https://en.wikipedia.org/wiki/Black_hole"
-        script["claims"][0]["source_sentence"] = sentence
+        script["claims"][0]["sentence_ids"] = ["1"]
         document = SourceDocument(
             title="Black hole",
             text=sentence.casefold(),

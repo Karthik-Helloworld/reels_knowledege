@@ -1,21 +1,21 @@
 {
   "topic": "Why the Moon has phases",
-  "hook": "The Moon is Earth's only natural satellite.",
+  "hook": "One satellite circles Earth.",
   "beats": [
     {
-      "narration": "The Moon is Earth's only natural satellite.",
+      "narration": "We see the Moon because it orbits Earth.",
       "on_screen": "Earth's satellite",
       "source_url": "https://en.wikipedia.org/wiki/Moon"
     }
   ],
-  "closing": "The Moon is Earth's only natural satellite.",
-  "key_takeaway": "The Moon is Earth's only natural satellite.",
+  "closing": "That orbit is why the light changes.",
+  "key_takeaway": "The Moon orbits Earth.",
   "cta": "Follow for another science fact.",
   "claims": [
     {
-      "text": "The Moon is Earth's only natural satellite.",
+      "text": "Earth has one natural satellite.",
       "source_url": "https://en.wikipedia.org/wiki/Moon",
-      "source_sentence": "The Moon is Earth's only natural satellite."
+      "sentence_ids": ["1"]
     }
   ]
 }

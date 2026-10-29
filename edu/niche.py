@@ -48,7 +48,7 @@ def load_niche(path: Path | None = None) -> NicheConfig:
         ollama.get("host") or "http://127.0.0.1:11434"
     ).strip()
     model = os.environ.get("OLLAMA_MODEL", "").strip() or str(
-        ollama.get("model") or "llama3.2"
+        ollama.get("model") or "qwen2.5:7b"
     ).strip()
     length = raw.get("length_seconds") or 30
     return NicheConfig(

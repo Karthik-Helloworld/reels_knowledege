@@ -15,7 +15,7 @@ class NicheTests(unittest.TestCase):
             niche.sources,
             ("wikipedia", "nasa", "openstax", "wikimedia"),
         )
-        self.assertEqual(niche.ollama_model, "llama3.2")
+        self.assertEqual(niche.ollama_model, "qwen2.5:7b")
         self.assertEqual(niche.length_seconds, 30)
 
     def test_ollama_env_overrides_yaml(self) -> None:

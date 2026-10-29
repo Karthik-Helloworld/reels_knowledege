@@ -1,10 +1,11 @@
 """Ask local Ollama for a reel script grounded in the fetched sources.
 
-The model must return JSON. Each claim cites a source URL and a sentence
-copied from that source. Hook, beats, closing, and claims may use only words
-from that cited sentence. Malformed JSON and extra words are retried before
-the run fails. This is not a fact checker: it checks citations and wording,
-not whether the claim is true.
+The model must return JSON. It does not write citation text. Each claim names
+the source URL and the ids of the numbered sentences that support it. This
+module copies those sentences in from the source. Hook, beats, closing, and
+claim text are the model's own wording. Malformed JSON and unknown sentence
+ids are retried before the run fails. Dates, numbers, and names are checked
+later by the fact checker, not here.
 """
 
 from __future__ import annotations
@@ -22,21 +23,21 @@ HOOK_MAX_CHARS = 140
 OLLAMA_ATTEMPTS = 3
 
 SYSTEM_PROMPT = """You write a short educational reel script as JSON.
-Use only the source text the user provides. Do not add facts from anywhere else.
+Use only the numbered source sentences the user provides. Do not add facts from anywhere else.
 The angle is only a hint. It is not a source. If the sources do not support it, ignore it.
 Every source_url must be copied exactly from one of the sources.
-Every claim's source_sentence must appear in that source's text. Capitalization may differ.
-The hook, each beat's narration, each on_screen line, the closing, the key_takeaway,
-and each claim text may use only words that appear in the cited source sentence.
-Copy that sentence. Do not add a word, a name, or a number that is not in it.
-Every text field must be non-empty. The closing and the key_takeaway must each
-be one sentence copied from the cited source sentence. An empty field is invalid.
-Do not write Imagine, Get, According, Wikipedia, Image, or Diagram unless that
-exact word is in the cited sentence. on_screen is not a label.
+Do not write citation text. Each claim has text, source_url, and sentence_ids.
+sentence_ids lists the ids of the numbered sentences that support that claim.
+Use at least one id, and only ids from that source. Do not invent an id.
+Write the hook, narration, on-screen line, closing, key takeaway, and claim text
+in your own words. Do not paste the source sentence into every field.
+Do not invent a number, a date, or a name that is not in the cited source sentence.
+Every text field must be non-empty. An empty field is invalid.
+on_screen is a short phrase, not a label such as Image or Diagram.
 Return one JSON object and nothing else, with this shape:
 {"topic":"...","hook":"...","beats":[{"narration":"...","on_screen":"...","source_url":"..."}],
 "closing":"...","key_takeaway":"...","cta":"...",
-"claims":[{"text":"...","source_url":"...","source_sentence":"..."}]}
+"claims":[{"text":"...","source_url":"...","sentence_ids":["1"]}]}
 The hook must be at most 140 characters.
 key_takeaway is one sentence. cta is a short call to action and adds no facts.
 Write 3 beats when the sources support them. Include at least one claim.
@@ -139,6 +140,101 @@ class ReelScript(BaseModel):
         return claims
 
 
+class DraftClaim(BaseModel):
+    """What the model is allowed to write. Citation text is not one of the fields."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1)
+    source_url: str = Field(min_length=1)
+    sentence_ids: list[str] = Field(min_length=1)
+
+    @field_validator("text")
+    @classmethod
+    def not_blank(cls, value: str) -> str:
+        cleaned = " ".join(value.split())
+        if not cleaned:
+            raise ValueError("must not be blank")
+        return cleaned
+
+    @field_validator("source_url")
+    @classmethod
+    def http_url(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned.startswith(("http://", "https://")):
+            raise ValueError("source_url must be an http(s) url")
+        return cleaned
+
+    @field_validator("sentence_ids", mode="before")
+    @classmethod
+    def ids_are_strings(cls, value: object) -> list[str]:
+        if not isinstance(value, list) or not value:
+            raise ValueError("claim has no sentence id")
+        cleaned: list[str] = []
+        for item in value:
+            text = str(item).strip()
+            if not text:
+                raise ValueError("claim has no sentence id")
+            cleaned.append(text)
+        return cleaned
+
+
+class DraftScript(BaseModel):
+    """Ollama's script. Claims cite sentence ids, not copied sentences."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    topic: str = Field(min_length=1)
+    hook: str = Field(min_length=1)
+    beats: list[ScriptBeat]
+    closing: str = Field(min_length=1)
+    key_takeaway: str = Field(min_length=1)
+    cta: str = Field(min_length=1)
+    claims: list[DraftClaim]
+
+    @field_validator("topic", "closing", "key_takeaway", "cta")
+    @classmethod
+    def not_blank(cls, value: str) -> str:
+        cleaned = " ".join(value.split())
+        if not cleaned:
+            raise ValueError("must not be blank")
+        return cleaned
+
+    @field_validator("hook")
+    @classmethod
+    def hook_cap(cls, value: str) -> str:
+        cleaned = " ".join(value.split())
+        if not cleaned:
+            raise ValueError("must not be blank")
+        if len(cleaned) > HOOK_MAX_CHARS:
+            raise ValueError(f"hook must be at most {HOOK_MAX_CHARS} characters")
+        return cleaned
+
+    @field_validator("beats")
+    @classmethod
+    def beat_count(cls, beats: list[ScriptBeat]) -> list[ScriptBeat]:
+        if not 1 <= len(beats) <= 6:
+            raise ValueError("need 1 to 6 beats")
+        return beats
+
+    @field_validator("claims")
+    @classmethod
+    def claim_count(cls, claims: list[DraftClaim]) -> list[DraftClaim]:
+        if not claims:
+            raise ValueError("need at least one claim")
+        return claims
+
+
+def split_sentences(text: str) -> list[str]:
+    parts = re.split(r"(?<=[.!?])\s+", text.strip())
+    cleaned = [part.strip() for part in parts if part.strip()]
+    return cleaned or ([text.strip()] if text.strip() else [])
+
+
+def numbered_sentences(text: str) -> dict[str, str]:
+    return {str(index): sentence for index, sentence in enumerate(split_sentences(text), start=1)}
+
+
 def build_messages(
     topic: str,
     angle: str,
@@ -157,20 +253,21 @@ def build_messages(
         "sources": [
             {
                 "title": document.title,
-                "text": document.text,
                 "url": document.url,
                 "license": document.license,
                 "author": document.author,
+                "sentences": [
+                    {"id": sentence_id, "text": sentence}
+                    for sentence_id, sentence in numbered_sentences(document.text).items()
+                ],
             }
             for document in documents
         ],
     }
     user = (
         "Write the reel script for this topic. "
-        "Ground every beat in the sources below. "
-        "Use only words from the cited source sentence. "
-        "The closing and the key_takeaway must each be one non-empty sentence "
-        "copied from that sentence.\n"
+        "Cite each claim with sentence_ids from the numbered sentences. "
+        "Use your own wording. Do not write the citation text.\n"
         + json.dumps(payload, indent=2)
     )
     messages = [
@@ -183,8 +280,8 @@ def build_messages(
                 "role": "user",
                 "content": (
                     "The previous script was rejected. "
-                    "Rewrite it so every hook, beat, closing, and claim uses only "
-                    "words from the cited source sentence.\n"
+                    "Keep every claim's sentence_ids, and rewrite the hook, beats, "
+                    "closing, and claims in your own words.\n"
                     + correction
                 ),
             }
@@ -240,6 +337,47 @@ def unsupported_words(text: str, support: str) -> list[str]:
     return extra
 
 
+def cited_sentence(claim: DraftClaim, documents: list[SourceDocument]) -> str:
+    """Copy the exact source sentences named by the claim's ids."""
+
+    by_url = {document.url: document for document in documents}
+    document = by_url.get(claim.source_url)
+    if document is None:
+        raise GroundingError(
+            f"claim cites a url that was not in the sources: {claim.source_url}"
+        )
+    if not claim.sentence_ids:
+        raise GroundingError("claim has no sentence id")
+    index = numbered_sentences(document.text)
+    chosen: list[str] = []
+    for sentence_id in claim.sentence_ids:
+        sentence = index.get(sentence_id)
+        if sentence is None:
+            raise GroundingError(f"sentence id does not exist: {sentence_id}")
+        chosen.append(sentence)
+    return " ".join(chosen)
+
+
+def resolve_citations(draft: DraftScript, documents: list[SourceDocument]) -> ReelScript:
+    claims = [
+        ScriptClaim(
+            text=claim.text,
+            source_url=claim.source_url,
+            source_sentence=cited_sentence(claim, documents),
+        )
+        for claim in draft.claims
+    ]
+    return ReelScript(
+        topic=draft.topic,
+        hook=draft.hook,
+        beats=draft.beats,
+        closing=draft.closing,
+        key_takeaway=draft.key_takeaway,
+        cta=draft.cta,
+        claims=claims,
+    )
+
+
 def assert_grounded(script: ReelScript, documents: list[SourceDocument]) -> None:
     by_url = {document.url: document for document in documents}
     if not by_url:
@@ -250,57 +388,20 @@ def assert_grounded(script: ReelScript, documents: list[SourceDocument]) -> None
                 f"beat cites a url that was not in the sources: {beat.source_url}"
             )
     for claim in script.claims:
-        document = by_url.get(claim.source_url)
-        if document is None:
+        if claim.source_url not in by_url:
             raise GroundingError(
                 f"claim cites a url that was not in the sources: {claim.source_url}"
             )
-        if not sentence_in_source(claim.source_sentence, document.text):
-            raise GroundingError(
-                f"source_sentence is not in the cited source: {claim.source_sentence}"
-            )
-    _assert_words_are_supported(script)
+        if not claim.source_sentence.strip():
+            raise GroundingError("claim has no sentence id")
 
 
-def _assert_words_are_supported(script: ReelScript) -> None:
-    support_by_url: dict[str, str] = {}
-    for claim in script.claims:
-        extra = unsupported_words(claim.text, claim.source_sentence)
-        if extra:
-            raise GroundingError(
-                "claim uses words that are not in the cited source sentence: " + ", ".join(extra)
-            )
-        joined = f"{support_by_url.get(claim.source_url, '')} {claim.source_sentence}".strip()
-        support_by_url[claim.source_url] = joined
-    cited = " ".join(support_by_url.values())
-    for label, text in (
-        ("hook", script.hook),
-        ("closing", script.closing),
-        ("key_takeaway", script.key_takeaway),
-    ):
-        extra = unsupported_words(text, cited)
-        if extra:
-            raise GroundingError(
-                f"{label} uses words that are not in the cited source sentence: " + ", ".join(extra)
-            )
-    for beat in script.beats:
-        support = support_by_url.get(beat.source_url, "")
-        if not support:
-            raise GroundingError(f"beat has no cited source sentence for {beat.source_url}")
-        for label, text in (("narration", beat.narration), ("on_screen", beat.on_screen)):
-            extra = unsupported_words(text, support)
-            if extra:
-                raise GroundingError(
-                    f"beat {label} uses words that are not in the cited source sentence: "
-                    + ", ".join(extra)
-                )
-
-
-def script_from_payload(payload: dict) -> ReelScript:
+def script_from_payload(payload: dict, documents: list[SourceDocument]) -> ReelScript:
     try:
-        return ReelScript.model_validate(payload)
+        draft = DraftScript.model_validate(payload)
     except ValidationError as exc:
         raise GroundingError(f"script JSON did not match the schema: {exc}") from exc
+    return resolve_citations(draft, documents)
 
 
 def _strip_fence(content: str) -> str:
@@ -373,9 +474,9 @@ def generate_script(
                 niche.ollama_host,
                 niche.ollama_model,
                 messages,
-                schema=ReelScript.model_json_schema(),
+                schema=DraftScript.model_json_schema(),
             )
-            script = script_from_payload(payload)
+            script = script_from_payload(payload, documents)
             if script.topic.casefold() != topic.strip().casefold():
                 raise GroundingError("script topic does not match the requested topic")
             assert_grounded(script, documents)
@@ -389,10 +490,10 @@ def generate_script(
                     "content": (
                         "Rejected: "
                         + str(exc)
-                        + " Every text field must be non-empty. The closing and the "
-                        "key_takeaway must each be one sentence copied from the cited "
-                        "source sentence. Rewrite every hook, beat, closing, and claim "
-                        "using only words from that sentence."
+                        + " Every claim needs at least one real sentence id from its "
+                        "source. Do not write citation text. Rewrite the hook, beats, "
+                        "closing, and claims in your own words, and do not invent a "
+                        "number, a date, or a name."
                     ),
                 },
             ]

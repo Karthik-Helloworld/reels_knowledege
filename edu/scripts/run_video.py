@@ -66,9 +66,11 @@ def build_package(
     retrieved_at: datetime | None = None,
     rng: random.Random | None = None,
     correction: str | None = None,
+    choice: TopicChoice | None = None,
 ) -> dict:
     config = niche or load_niche()
-    choice: TopicChoice = pick_topic(topic, topics_path, rng=rng)
+    resolved = choice if choice is not None else pick_topic(topic, topics_path, rng=rng)
+    choice = resolved
     stamp = retrieved_at or datetime.now(timezone.utc)
     fetched = fetch_sources(
         choice.topic,
@@ -145,6 +147,7 @@ def complete_video(
     when a script passes or ``OLLAMA_ATTEMPTS`` runs are exhausted.
     """
     config = niche or load_niche()
+    choice = pick_topic(topic, topics_path, rng=rng)
     correction: str | None = None
     report = None
     report_destination: Path | None = None
@@ -158,6 +161,7 @@ def complete_video(
             retrieved_at=retrieved_at,
             rng=rng,
             correction=correction,
+            choice=choice,
         )
         script, documents = package_parts(package)
         report = fact_check(
@@ -175,7 +179,8 @@ def complete_video(
             return save_successful_package(package, destination, topics_path)
         correction = (
             "Fact check rejected the script. "
-            "Use only words that appear in the cited source sentence.\n"
+            "Keep the same sentence ids and rewrite the wording. "
+            "Do not invent a number, a date, or a name.\n"
             + format_block_message(report)
         )
     assert report is not None and report_destination is not None

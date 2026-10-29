@@ -49,7 +49,7 @@ Python tests cover TTS, captions, and the theme constants in `core/utils.py`. `m
 
 The default niche in `edu/config/niche.yaml` is `science & space facts`.
 
-`make edu-video` resolves a topic, fetches one record from each source, and asks local Ollama for a short JSON script. The script includes a hook of at most 140 characters, a key takeaway, a call to action, and `claims`. Each claim has `text`, `source_url`, and `source_sentence`. `source_sentence` has to be copied from the cited source text. The angle in `edu/topics.csv` is a hint, not a source. `topics.csv` has a `status` column. A blank topic picks a `pending` row, and a successful package marks that row `used`. Phase 2 then fact-checks that script before the package is kept.
+`make edu-video` resolves a topic, fetches one record from each source, and asks local Ollama for a short JSON script. The script includes a hook of at most 140 characters, a key takeaway, a call to action, and `claims`. Each fetched source is split into numbered sentences. The model returns claim text plus `sentence_ids`. It does not write the citation. The pipeline copies the exact source sentence for those ids into `source_sentence`. The hook, narration, and claim text are the model's own wording. The angle in `edu/topics.csv` is a hint, not a source. `topics.csv` has a `status` column. A blank topic picks one `pending` row and keeps that row for every retry. A successful package marks that row `used`. Phase 2 then fact-checks that script before the package is kept.
 
 Sources, each stored as title, text, url, license, author, and retrieved_at:
 
@@ -71,8 +71,10 @@ Output: `edu/out/<topic>.json` with the sources and the script. That directory i
 
 ```bash
 ollama serve
-ollama pull llama3.2
+ollama pull qwen2.5:7b
 ```
+
+The default model is `qwen2.5:7b`, from `edu/config/niche.yaml`. `OLLAMA_MODEL` overrides it.
 
 `make edu-test` covers the source adapters with mock HTTP and the script generator with an Ollama fixture. Those tests do not call the network or Ollama.
 
