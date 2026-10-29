@@ -80,7 +80,8 @@ class ScriptGenTests(unittest.TestCase):
         self.assertEqual(result.hook, script["hook"])
         self.assertTrue(seen["url"].endswith("/api/chat"))
         self.assertEqual(seen["body"]["model"], "llama3.2")
-        self.assertEqual(seen["body"]["format"], "json")
+        self.assertEqual(seen["body"]["format"]["type"], "object")
+        self.assertIn("claims", seen["body"]["format"]["required"])
         self.assertIs(seen["body"]["stream"], False)
         self.assertIn(DOCUMENT.text, seen["body"]["messages"][1]["content"])
 

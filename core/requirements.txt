@@ -6,5 +6,5 @@
 # runtimes are large, and this cloud VM does not need them to render.
 # Install them on a Mac when you want speech and captions (see README).
 #
-#   .venv/bin/pip install piper-tts edge-tts faster-whisper
+#   .venv/bin/pip install -r core/requirements-speech.txt
 #   .venv/bin/python -m piper.download_voices en_US-lessac-medium

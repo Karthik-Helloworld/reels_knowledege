@@ -7,7 +7,7 @@ Hello-world video render does not call this module.
 On a MacBook Air M4 (16GB), install with the project venv and keep the
 default CPU int8 ``base`` model:
 
-    .venv/bin/pip install faster-whisper
+    .venv/bin/pip install -r core/requirements-speech.txt
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from pathlib import Path
 
 INSTALL_HINT = (
     "Install faster-whisper for word-level captions: "
-    ".venv/bin/pip install faster-whisper. "
+    ".venv/bin/pip install -r core/requirements-speech.txt. "
     "Default model is WHISPER_MODEL=base on CPU int8, which fits a 16GB machine. "
     "The hello-world Remotion render does not need captions. "
     "See the Phase 0 section of README.md."

@@ -22,6 +22,21 @@ from edu.scripts.script_gen import OLLAMA_ATTEMPTS, GroundingError, ReelScript, 
 from edu.sources.http import make_client
 from edu.sources.model import SourceDocument
 
+
+class VerdictItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    supported: bool
+    reason: str
+
+
+class VerdictPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    claims: list[VerdictItem]
+
+
 FACT_SYSTEM = """You verify educational reel claims against the cited source sentences.
 Use only those sentences. Do not use outside knowledge.
 supported is true only when one of the cited source sentences states the claim.
@@ -382,6 +397,7 @@ def fact_check(
                         niche.ollama_host,
                         niche.ollama_model,
                         messages,
+                        schema=VerdictPayload.model_json_schema(),
                     )
                     break
                 except GroundingError as exc:

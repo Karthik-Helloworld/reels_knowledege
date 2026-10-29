@@ -244,7 +244,7 @@ Phase 0 was checked on a Linux cloud VM, where Piper and faster-whisper are stub
 Speech and captions, when you want them:
 
 ```bash
-.venv/bin/pip install piper-tts edge-tts faster-whisper
+.venv/bin/pip install -r core/requirements-speech.txt
 .venv/bin/python -m piper.download_voices en_US-lessac-medium
 export PIPER_MODEL=/path/to/en_US-lessac-medium.onnx
 ```

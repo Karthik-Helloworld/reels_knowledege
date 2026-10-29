@@ -211,13 +211,15 @@ def ollama_chat(
     host: str,
     model: str,
     messages: list[dict[str, str]],
+    *,
+    schema: dict | None = None,
 ) -> dict:
     response = client.post(
         host.rstrip("/") + "/api/chat",
         json={
             "model": model,
             "stream": False,
-            "format": "json",
+            "format": schema if schema is not None else "json",
             "messages": messages,
         },
     )
@@ -259,7 +261,13 @@ def generate_script(
     last_error: GroundingError | None = None
     for _attempt in range(OLLAMA_ATTEMPTS):
         try:
-            payload = ollama_chat(client, niche.ollama_host, niche.ollama_model, messages)
+            payload = ollama_chat(
+                client,
+                niche.ollama_host,
+                niche.ollama_model,
+                messages,
+                schema=ReelScript.model_json_schema(),
+            )
             script = script_from_payload(payload)
             if script.topic.casefold() != topic.strip().casefold():
                 raise GroundingError("script topic does not match the requested topic")
