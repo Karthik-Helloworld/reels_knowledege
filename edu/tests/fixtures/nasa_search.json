@@ -1,0 +1,21 @@
+{
+  "collection": {
+    "items": [
+      {
+        "data": [
+          {"title": "Skip me", "description": "  ", "nasa_id": "EMPTY"}
+        ]
+      },
+      {
+        "data": [
+          {
+            "title": "Nearside of the Moon",
+            "description": "Nearside of the Moon",
+            "nasa_id": "PIA12235",
+            "secondary_creator": "NASA/JPL"
+          }
+        ]
+      }
+    ]
+  }
+}

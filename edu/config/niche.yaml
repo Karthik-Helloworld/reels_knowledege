@@ -1,0 +1,15 @@
+# Default niche for the local Reels pipeline.
+name: science & space facts
+audience: general viewers
+tone: clear and concrete
+length_seconds: 30
+# Book search used when the topic does not match an OpenStax title.
+openstax_query: astronomy
+ollama:
+  host: http://127.0.0.1:11434
+  model: llama3.2
+sources:
+  - wikipedia
+  - nasa
+  - openstax
+  - wikimedia
