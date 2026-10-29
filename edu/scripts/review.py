@@ -30,6 +30,7 @@ from edu.scripts.queue import (
     enqueue,
     isoformat,
     queue_db_path,
+    record_decision,
 )
 
 _ACTIONS = {
@@ -97,12 +98,14 @@ def reject_item(item_id: str, *, pending: Path, rejected: Path) -> Path:
     return _move_bundle(source, rejected)
 
 
-def edit_caption(item_id: str, caption: str, *, pending: Path) -> None:
+def edit_caption(item_id: str, caption: str, *, pending: Path) -> str:
     check_item_id(item_id)
     source = pending / item_id
     if not source.is_dir():
         raise FileNotFoundError(source)
+    previous = (source / "caption.txt").read_text(encoding="utf-8")
     write_caption(source, caption)
+    return previous
 
 
 def _parse_now(raw: str | None) -> datetime:
@@ -136,8 +139,10 @@ def decide(
     per_day: float,
     caption: str | None,
 ) -> datetime | None:
+    scheduled: datetime | None = None
+    detail: dict[str, str]
     if action == "approve":
-        return approve_item(
+        scheduled = approve_item(
             item_id,
             pending=pending,
             approved=approved,
@@ -145,15 +150,29 @@ def decide(
             now=now,
             per_day=per_day,
         )
-    if action == "reject":
+        detail = {"scheduled_at": isoformat(scheduled)}
+    elif action == "reject":
         reject_item(item_id, pending=pending, rejected=rejected)
-        return None
-    if action == "edit":
+        detail = {"result": "rejected"}
+    elif action == "edit":
         if caption is None or not caption.strip():
             raise ValueError("edit needs a new caption")
-        edit_caption(item_id, caption, pending=pending)
-        return None
-    raise ValueError(f"unknown decision: {action}")
+        previous = edit_caption(item_id, caption, pending=pending)
+        detail = {"previous_caption": previous, "caption": caption.strip() + "\n"}
+    else:
+        raise ValueError(f"unknown decision: {action}")
+    connection = connect(database)
+    try:
+        record_decision(
+            connection,
+            item_id=item_id,
+            action=action,
+            at=now,
+            detail=json.dumps(detail),
+        )
+    finally:
+        connection.close()
+    return scheduled
 
 
 def _interactive(
