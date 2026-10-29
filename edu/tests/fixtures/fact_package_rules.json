@@ -1,0 +1,36 @@
+{
+  "niche": "science & space facts",
+  "topic": "Why the Moon has phases",
+  "angle": "The lit portion we see changes as the Moon orbits Earth",
+  "sources": [
+    {
+      "title": "Moon",
+      "text": "The Moon is Earth's only natural satellite.",
+      "url": "https://en.wikipedia.org/wiki/Moon",
+      "license": "CC BY-SA 4.0",
+      "author": "Wikipedia contributors",
+      "retrieved_at": "2026-10-28T12:00:00Z"
+    }
+  ],
+  "script": {
+    "topic": "Why the Moon has phases",
+    "hook": "The Moon is Earth's only natural satellite.",
+    "beats": [
+      {
+        "narration": "On April 2, 2022 Andrew Fraknoi measured 12 kilometers.",
+        "on_screen": "far away",
+        "source_url": "https://en.wikipedia.org/wiki/Moon"
+      }
+    ],
+    "closing": "That is the Moon.",
+    "key_takeaway": "The Moon is Earth's only natural satellite.",
+    "cta": "Look up tonight.",
+    "claims": [
+      {
+        "text": "The Moon is Earth's only natural satellite.",
+        "source_url": "https://en.wikipedia.org/wiki/Moon",
+        "source_sentence": "The Moon is Earth's only natural satellite."
+      }
+    ]
+  }
+}

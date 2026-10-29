@@ -19,7 +19,11 @@ edu-render-hello:
 
 edu-video:
 	@python=$$(test -x $(PYTHON) && echo $(PYTHON) || echo python3); \
-	$$python -m edu.scripts.run_video --topic "$(TOPIC)"
+	if [ -n "$(FACT_FIXTURE)" ]; then \
+	  $$python -m edu.scripts.run_video --topic "$(TOPIC)" --fact-fixture "$(FACT_FIXTURE)"; \
+	else \
+	  $$python -m edu.scripts.run_video --topic "$(TOPIC)"; \
+	fi
 
 edu-test:
 	@python=$$(test -x $(PYTHON) && echo $(PYTHON) || echo python3); \
