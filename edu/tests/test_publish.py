@@ -24,6 +24,7 @@ from edu.publish.publish_youtube import (
     youtube_description,
 )
 from edu.publish.records import ensure_log
+from edu.publish.run import main as publish_main
 from edu.publish.run import publish_due
 from edu.scripts.queue import connect, isoformat
 from edu.sources.http import client_headers
@@ -39,6 +40,7 @@ _KEYS = (
     "IG_APP_SECRET",
     "IG_TOKEN_EXPIRES_AT",
     "IG_GRAPH_VERSION",
+    "IG_TOKEN_PATH",
     "YOUTUBE_CLIENT_ID",
     "YOUTUBE_CLIENT_SECRET",
     "YOUTUBE_REFRESH_TOKEN",
@@ -96,20 +98,17 @@ class PublishTests(unittest.TestCase):
         (folder / "claims.json").write_text(json.dumps(script["claims"]), encoding="utf-8")
         report = {"passed": passed, "claims": [{"id": "hook", "passed": passed}]}
         (folder / "fact_report.json").write_text(json.dumps(report), encoding="utf-8")
-        caption = "\n".join(
-            [
-                topic,
-                "",
-                "Example",
-                SOURCE,
-                LICENSE,
-                "Wikipedia contributors",
-                "",
-                "#ScienceFacts",
-                "",
-            ]
-        )
+        caption = "\n".join([topic, "", "#ScienceFacts", ""])
         (folder / "caption.txt").write_text(caption, encoding="utf-8")
+        sources = [
+            {
+                "title": "Example",
+                "url": SOURCE,
+                "license": LICENSE,
+                "author": "Wikipedia contributors",
+            }
+        ]
+        (folder / "sources.json").write_text(json.dumps(sources), encoding="utf-8")
         (folder / "video.mp4").write_bytes(b"fake-mp4-bytes-for-upload")
         self.connection.execute(
             """
@@ -204,7 +203,7 @@ class PublishTests(unittest.TestCase):
                 form = parse_qs(request.content.decode())
                 self.assertEqual(form["media_type"], ["REELS"])
                 self.assertEqual(form["is_ai_generated"], ["true"])
-                self.assertIn(SOURCE, form["caption"][0])
+                self.assertNotIn(LICENSE, form["caption"][0])
                 self.assertTrue(form["video_url"][0].startswith("https://demo.supabase.co/"))
                 return httpx.Response(200, json={"id": "container-1"})
             if path.endswith("/container-1"):
@@ -493,6 +492,141 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(rows[0]["remote_id"], "yt-9")
         self.assertEqual(json.loads(rows[0]["source_urls"]), [SOURCE])
         self.assertEqual(json.loads(rows[0]["licenses"]), [LICENSE])
+        self.assertEqual(self.published("instagram"), [])
+
+    def test_main_without_live_does_not_post(self) -> None:
+        self.add_item("black-hole", "Black hole", NOW)
+        env = self.root / "blank.env"
+        env.write_text("\n", encoding="utf-8")
+        seen: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(str(request.url))
+            raise AssertionError(request.url)
+
+        with cleared(**_supabase()), patch(
+            "edu.publish.run.make_client",
+            return_value=client_for(handler),
+        ):
+            code = publish_main(
+                [
+                    "--env",
+                    str(env),
+                    "--db",
+                    str(self.db),
+                    "--now",
+                    isoformat(NOW),
+                    "--cadence-per-day",
+                    "1",
+                    "--niche",
+                    str(self.niche),
+                ]
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(seen, [])
+        self.assertEqual(self.published("instagram"), [])
+
+    def test_main_live_flag_reaches_instagram(self) -> None:
+        self.add_item("black-hole", "Black hole", NOW)
+        env = self.root / "blank.env"
+        env.write_text("\n", encoding="utf-8")
+        seen: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request.url.path)
+            return httpx.Response(404, text="stop")
+
+        with cleared(**_supabase()), patch(
+            "edu.publish.run.make_client",
+            return_value=client_for(handler),
+        ):
+            code = publish_main(
+                [
+                    "--live",
+                    "--env",
+                    str(env),
+                    "--db",
+                    str(self.db),
+                    "--now",
+                    isoformat(NOW),
+                    "--cadence-per-day",
+                    "1",
+                    "--niche",
+                    str(self.niche),
+                ]
+            )
+        self.assertEqual(code, 1)
+        self.assertTrue(any(path.endswith("/content_publishing_limit") for path in seen))
+
+    def test_main_live_and_dry_run_does_not_post(self) -> None:
+        self.add_item("black-hole", "Black hole", NOW)
+        env = self.root / "blank.env"
+        env.write_text("\n", encoding="utf-8")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise AssertionError(request.url)
+
+        with cleared(**_supabase()), patch(
+            "edu.publish.run.make_client",
+            return_value=client_for(handler),
+        ):
+            code = publish_main(
+                [
+                    "--live",
+                    "--dry-run",
+                    "--env",
+                    str(env),
+                    "--db",
+                    str(self.db),
+                    "--now",
+                    isoformat(NOW),
+                    "--cadence-per-day",
+                    "1",
+                ]
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(self.published("instagram"), [])
+
+    def test_refreshed_token_file_overrides_the_environment(self) -> None:
+        self.add_item("black-hole", "Black hole", NOW)
+        token_path = self.root / "instagram_token.json"
+        token_path.write_text(
+            json.dumps({"access_token": "from-file", "refreshed_at": isoformat(NOW)}),
+            encoding="utf-8",
+        )
+        seen: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/content_publishing_limit"):
+                seen.append(request.url.params.get("access_token", ""))
+                return httpx.Response(
+                    200,
+                    json={"data": [{"quota_usage": 50, "config": {"quota_total": 50}}]},
+                )
+            raise AssertionError(request.url)
+
+        values = _supabase()
+        values["IG_ACCESS_TOKEN"] = "from-env"
+        values["IG_TOKEN_PATH"] = str(token_path)
+        with cleared(**values):
+            code = self.publish(handler, live=True)
+        self.assertEqual(code, 1)
+        self.assertEqual(seen, ["from-file"])
+
+    def test_a_source_without_a_license_is_not_guessed(self) -> None:
+        self.add_item("black-hole", "Black hole", NOW)
+        folder = self.root / "black-hole"
+        (folder / "sources.json").write_text(
+            json.dumps([{"url": SOURCE}]),
+            encoding="utf-8",
+        )
+        (folder / "caption.txt").write_text(
+            f"Black hole\n\n{SOURCE}\n{LICENSE}\n",
+            encoding="utf-8",
+        )
+        with cleared(**_supabase()):
+            code = self.publish(refuse, live=True)
+        self.assertEqual(code, 1)
         self.assertEqual(self.published("instagram"), [])
 
     def test_env_file_does_not_override_the_process(self) -> None:

@@ -1,4 +1,4 @@
-"""Publish due approved videos. Dry-run unless ``--live`` and credentials exist.
+"""Publish due approved videos. Dry-run unless ``--live`` is passed.
 
 ``make publish`` calls this module. A dry-run prints the plan and does not
 upload. A live Instagram post uploads the mp4, publishes the Reel, then deletes
@@ -8,6 +8,7 @@ the hosted file. YouTube uploads the local file with a resumable Shorts session.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from datetime import datetime, timezone
@@ -71,8 +72,37 @@ def youtube_refresh_token() -> str:
     return str(load_token().get("refresh_token") or "").strip()
 
 
+def instagram_token_path() -> Path:
+    raw = os.environ.get("IG_TOKEN_PATH", "").strip()
+    if raw:
+        return Path(raw)
+    return repo_root() / "edu" / "out" / "instagram_token.json"
+
+
+def instagram_access_token() -> str:
+    """Prefer the refreshed token file over ``IG_ACCESS_TOKEN``.
+
+    A scheduled run writes that file and reads it next time. Delete the file
+    to go back to the value in ``.env``.
+    """
+
+    env_token = os.environ.get("IG_ACCESS_TOKEN", "").strip()
+    path = instagram_token_path()
+    if not path.is_file():
+        return env_token
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return env_token
+    if not isinstance(payload, dict):
+        return env_token
+    saved = str(payload.get("access_token") or "").strip()
+    return saved or env_token
+
+
 def instagram_missing() -> list[str]:
-    return present("IG_ACCESS_TOKEN", "IG_USER_ID")
+    missing = [] if instagram_access_token() else ["IG_ACCESS_TOKEN"]
+    return missing + present("IG_USER_ID")
 
 
 def youtube_missing() -> list[str]:
@@ -169,7 +199,7 @@ def _instagram(connection, bundle, *, now, live, disclose, client, sleep) -> int
     if published_since(connection, "instagram", day_ago(now)) >= INSTAGRAM_DAILY_LIMIT:
         _fail(connection, bundle, "instagram", now, "local Instagram daily limit reached")
         return 1
-    token = os.environ["IG_ACCESS_TOKEN"].strip()
+    token = instagram_access_token()
     try:
         token = _maybe_refresh_instagram(client, token, now)
         usage, total = publishing_quota(
@@ -285,10 +315,8 @@ def _maybe_refresh_instagram(client: httpx.Client, token: str, now: datetime) ->
 
 def _store_instagram_token(payload: dict, now: datetime) -> None:
     expires_in = int(payload.get("expires_in") or 0)
-    path = repo_root() / "edu" / "out" / "instagram_token.json"
+    path = instagram_token_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    import json
-
     body = {
         "access_token": payload.get("access_token"),
         "expires_in": expires_in,
@@ -391,7 +419,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--live",
         action="store_true",
-        help="Accepted for launchd examples. Credentials already turn a platform live.",
+        help="Post for real. A bare make publish stays a dry-run.",
     )
     parser.add_argument(
         "--dry-run",
@@ -430,11 +458,11 @@ def main(argv: list[str] | None = None) -> int:
         return publish_due(
             database=database,
             now=now,
-            live=not args.dry_run,
+            live=bool(args.live and not args.dry_run),
             per_day=per_day,
             niche_file=args.niche,
             client=client,
-            sleep=_noop_sleep if not args.live else _real_sleep,
+            sleep=_real_sleep if args.live and not args.dry_run else _noop_sleep,
             item_id=args.id or None,
         )
 

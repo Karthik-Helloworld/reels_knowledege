@@ -41,27 +41,22 @@ def run_limit(per_day: float) -> int:
     return max(1, math.ceil(per_day))
 
 
-def attribution(claims: object, caption: str) -> tuple[list[str], list[str]]:
+def attribution_from_sources(sources: object) -> tuple[list[str], list[str]]:
+    """Use the stored source records. Do not guess a license from the caption."""
+
+    if not isinstance(sources, list):
+        raise ValueError("sources.json must be a list")
     urls: list[str] = []
     licenses: list[str] = []
-    if isinstance(claims, list):
-        for claim in claims:
-            if not isinstance(claim, dict):
-                continue
-            url = str(claim.get("source_url") or "").strip()
-            if url and url not in urls:
-                urls.append(url)
-    lines = [line.strip() for line in caption.splitlines()]
-    for index, line in enumerate(lines):
-        if not line.startswith(("http://", "https://")):
-            continue
-        if line not in urls:
-            urls.append(line)
-        if index + 1 >= len(lines):
-            continue
-        license_name = lines[index + 1]
-        if not license_name or license_name.startswith(("#", "http://", "https://")):
-            continue
+    for source in sources:
+        if not isinstance(source, dict):
+            raise ValueError("each source must be an object")
+        url = str(source.get("url") or "").strip()
+        license_name = str(source.get("license") or "").strip()
+        if not url or not license_name:
+            raise ValueError("each source needs a url and a license")
+        if url not in urls:
+            urls.append(url)
         if license_name not in licenses:
             licenses.append(license_name)
     return urls, licenses
@@ -73,11 +68,13 @@ def _read(path: str) -> str:
 
 def load_bundle(row: sqlite3.Row) -> dict:
     script = json.loads(_read(row["script_path"]))
-    claims = json.loads(_read(row["claims_path"]))
     report_text = _read(row["fact_report_path"])
     report = json.loads(report_text)
     caption = _read(row["caption_path"])
-    urls, licenses = attribution(claims, caption)
+    sources_path = Path(str(row["video_path"])).parent / "sources.json"
+    if not sources_path.is_file():
+        raise ValueError(f"{sources_path.parent} has no sources.json")
+    urls, licenses = attribution_from_sources(json.loads(sources_path.read_text(encoding="utf-8")))
     topic = str(script.get("topic") or row["topic"] or row["id"])
     return {
         "id": str(row["id"]),

@@ -157,7 +157,7 @@ make review ARGS="--decide edit --id black-hole --caption 'Revised caption'"
 
 ## Phase 5: dry-run publish
 
-`make publish` posts due rows from `edu/out/queue.sqlite`. A platform stays a dry-run until its credentials exist, and a dry-run does not upload the mp4 or call that API. `--dry-run` forces that plan even after `.env` is filled in. Nothing pending or rejected is eligible. A fact report that did not pass is skipped. One run publishes at most the daily cadence (`cadence_per_day` in `edu/config/niche.yaml`, default 1). Extra due videos wait for the next run.
+`make publish` with no flags is a dry-run, even when `.env` already has tokens. It prints the plan and does not upload. `--live` posts the platforms whose credentials exist. `--dry-run` wins if both flags are set. Nothing pending or rejected is eligible. A fact report that did not pass is skipped. One run publishes at most the daily cadence (`cadence_per_day` in `edu/config/niche.yaml`, default 1). Extra due videos wait for the next run. Source URLs and licenses in the publish log come from `sources.json` in the approved bundle.
 
 Instagram uses the Graph API. The flow is: upload the approved mp4 to a public URL, create a Reels container with that `video_url`, poll `status_code` until `FINISHED`, then `media_publish`. The hosted file is deleted after the attempt. Set `VIDEO_HOST` to `r2` (Cloudflare R2) or `supabase` (Supabase Storage). YouTube uses the Data API v3 resumable upload. The title is at most 100 characters and ends with `#Shorts`. The description keeps the caption attribution (source URL and license). There is no instagrapi and no browser automation.
 
@@ -171,7 +171,7 @@ Each live post is a row in the same SQLite file, table `publications`: source UR
 2. Link the professional Instagram account to a Facebook Page. The Page and the Instagram account have to be connected before Graph will publish.
 3. Create a User token that can publish: `instagram_basic`, `instagram_content_publish`, `pages_show_list`, and `pages_read_engagement`. Copy the Instagram user id into `IG_USER_ID`.
 4. Put `IG_APP_ID`, `IG_APP_SECRET`, and the short-lived `IG_ACCESS_TOKEN` in `.env`. `make publish` reads that file and does not override variables already in the environment. Do not commit `.env`.
-5. Exchange the short-lived token for a long-lived one (about 60 days). The helper writes `edu/out/instagram_token.json`, which is gitignored. Copy the new token back into `IG_ACCESS_TOKEN`. Set `IG_TOKEN_EXPIRES_AT` to the expiry. A later `--live` run refreshes the token when it expires within 7 days.
+5. Exchange the short-lived token for a long-lived one (about 60 days). The helper writes `edu/out/instagram_token.json`, which is gitignored. The next `make publish` reads that file and uses it instead of `IG_ACCESS_TOKEN`. Set `IG_TOKEN_EXPIRES_AT` to the expiry. A `--live` run refreshes the token when it expires within 7 days and writes the new token back to that file, so a daily job does not need a person to copy it. Delete the file to use the `.env` token again.
 
 ```bash
 make publish ARGS="--exchange-instagram"
@@ -180,8 +180,8 @@ make publish ARGS="--exchange-instagram"
 Preview, and the real run. The first command never uploads. The second posts only the platforms whose credentials exist. A missing platform prints `No upload.`
 
 ```bash
-make publish ARGS="--dry-run"
 make publish
+make publish ARGS="--live"
 ```
 
 ### YouTube desktop OAuth
@@ -197,7 +197,7 @@ The refresh token is stored in `edu/out/youtube_token.json`.
 
 ### MacBook schedule
 
-launchd, once a day at 09:00. Until `.env` has tokens, this stays a dry-run and does not upload. Save as `~/Library/LaunchAgents/com.reelsknowledge.publish.plist` and `launchctl load` it. Replace the repo path.
+launchd, once a day at 09:00. `ARGS=--live` is what turns the job into a real post. Without it, `make publish` only prints the plan. Save as `~/Library/LaunchAgents/com.reelsknowledge.publish.plist` and `launchctl load` it. Replace the repo path.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -212,6 +212,7 @@ launchd, once a day at 09:00. Until `.env` has tokens, this stays a dry-run and 
   <array>
     <string>/usr/bin/make</string>
     <string>publish</string>
+    <string>ARGS=--live</string>
   </array>
   <key>StartCalendarInterval</key>
   <dict>
@@ -224,10 +225,10 @@ launchd, once a day at 09:00. Until `.env` has tokens, this stays a dry-run and 
 </plist>
 ```
 
-cron, same idea. `make publish` posts once the tokens are in `.env`. Use `ARGS="--dry-run"` to keep the preview:
+cron, same opt-in. Drop `ARGS="--live"` to keep the daily run as a preview:
 
 ```cron
-0 9 * * * cd /Users/you/reels_knowledege && /usr/bin/make publish
+0 9 * * * cd /Users/you/reels_knowledege && /usr/bin/make publish ARGS="--live"
 ```
 
 ## Mac install (MacBook Air M4, 16GB)
