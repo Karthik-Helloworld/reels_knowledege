@@ -30,6 +30,14 @@ CREATE TABLE IF NOT EXISTS queue (
     scheduled_at TEXT NOT NULL,
     approved_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS decisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('approve', 'reject', 'edit')),
+    actor TEXT NOT NULL,
+    at TEXT NOT NULL,
+    detail TEXT NOT NULL
+);
 """
 
 
@@ -144,6 +152,39 @@ def can_publish(connection: sqlite3.Connection, item_id: str) -> bool:
 
     row = get_item(connection, item_id)
     return row is not None and row["status"] == "approved"
+
+
+def record_decision(
+    connection: sqlite3.Connection,
+    *,
+    item_id: str,
+    action: str,
+    at: datetime,
+    detail: str,
+    actor: str | None = None,
+) -> None:
+    """Append one review decision. Approve, reject, and edit all write a row."""
+
+    who = (actor or os.environ.get("REVIEW_ACTOR", "")).strip() or "local"
+    connection.execute(
+        """
+        INSERT INTO decisions (item_id, action, actor, at, detail)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (item_id, action, who, isoformat(at), detail),
+    )
+    connection.commit()
+
+
+def list_decisions(connection: sqlite3.Connection, item_id: str | None = None) -> list[sqlite3.Row]:
+    if item_id is None:
+        return list(connection.execute("SELECT * FROM decisions ORDER BY id"))
+    return list(
+        connection.execute(
+            "SELECT * FROM decisions WHERE item_id = ? ORDER BY id",
+            (item_id,),
+        )
+    )
 
 
 def list_queue(connection: sqlite3.Connection) -> list[sqlite3.Row]:

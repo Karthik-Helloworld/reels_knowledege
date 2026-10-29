@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from edu.scripts.pending import format_item, stage_pending
-from edu.scripts.queue import can_publish, connect, get_item, list_queue
+from edu.scripts.queue import can_publish, connect, get_item, list_decisions, list_queue
 from edu.scripts.review import main as review_main
 
 NOW = "2026-10-28T15:00:00+00:00"
@@ -112,6 +112,7 @@ class ReviewTests(unittest.TestCase):
         bundle = self.stage("black-hole", "Black hole")
         shown = format_item(bundle)
         self.assertTrue((bundle / "video.mp4").is_file())
+        self.assertTrue((bundle / "sources.json").is_file())
         self.assertIn("Black hole starts here.", shown)
         self.assertIn("Black hole is the example.", shown)
         self.assertIn("https://en.wikipedia.org/wiki/Example", shown)
@@ -143,6 +144,11 @@ class ReviewTests(unittest.TestCase):
             self.assertTrue(can_publish(connection, "black-hole"))
             self.assertFalse(can_publish(connection, "mars"))
             self.assertIsNone(get_item(connection, "mars"))
+            decisions = list_decisions(connection)
+            self.assertEqual([row["action"] for row in decisions], ["approve", "reject"])
+            self.assertEqual(decisions[0]["actor"], "local")
+            self.assertEqual(decisions[1]["item_id"], "mars")
+            self.assertIn("rejected", decisions[1]["detail"])
         finally:
             connection.close()
 
@@ -166,6 +172,12 @@ class ReviewTests(unittest.TestCase):
         try:
             self.assertEqual(list_queue(connection), [])
             self.assertFalse(can_publish(connection, "black-hole"))
+            decisions = list_decisions(connection, "black-hole")
+            self.assertEqual(len(decisions), 1)
+            self.assertEqual(decisions[0]["action"], "edit")
+            detail = json.loads(decisions[0]["detail"])
+            self.assertIn("#ScienceFacts", detail["previous_caption"])
+            self.assertEqual(detail["caption"], "Revised caption for review\n")
         finally:
             connection.close()
 

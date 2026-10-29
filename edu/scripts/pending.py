@@ -16,7 +16,14 @@ from pathlib import Path
 from core.utils import repo_root
 
 _ITEM_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$")
-_FILES = ("video.mp4", "script.json", "claims.json", "fact_report.json", "caption.txt")
+_FILES = (
+    "video.mp4",
+    "script.json",
+    "claims.json",
+    "fact_report.json",
+    "caption.txt",
+    "sources.json",
+)
 
 
 def edu_out() -> Path:
@@ -97,6 +104,11 @@ def stage_pending(
     report = json.loads(report_path.read_text(encoding="utf-8"))
     if not isinstance(report, dict):
         raise ValueError(f"{report_path} must be a JSON object")
+    sources = package.get("sources")
+    if sources is None:
+        sources = []
+    if not isinstance(sources, list):
+        raise ValueError(f"{package_path} sources must be a list")
     directory = root or pending_root()
     directory.mkdir(parents=True, exist_ok=True)
     item_id = allocate_id(package_path.stem, directory, taken)
@@ -116,6 +128,10 @@ def stage_pending(
         encoding="utf-8",
     )
     shutil.copy2(caption_path, destination / "caption.txt")
+    (destination / "sources.json").write_text(
+        json.dumps(sources, indent=2) + "\n",
+        encoding="utf-8",
+    )
     return destination
 
 

@@ -13,6 +13,7 @@ import argparse
 import json
 import random
 import re
+import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -301,10 +302,30 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
-    print(video)
-    print(caption)
+    discard_loose_outputs(path, video, caption, args.report or default_report_path(path))
     print(bundle)
     return 0
+
+
+def discard_loose_outputs(
+    package_path: Path,
+    video_path: Path,
+    caption_path: Path,
+    report_path: Path,
+) -> None:
+    """Remove the ungated copies once the pending bundle has them.
+
+    The pending directory is the only finished video. A loose mp4 next to it
+    would look publishable before anyone approves it.
+    """
+
+    props = package_path.with_suffix(".props.json")
+    media = package_path.parent / f"{package_path.stem}-media"
+    for path in (video_path, caption_path, package_path, report_path, props):
+        if path.is_file():
+            path.unlink()
+    if media.is_dir():
+        shutil.rmtree(media)
 
 
 if __name__ == "__main__":
