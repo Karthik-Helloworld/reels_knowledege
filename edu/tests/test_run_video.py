@@ -204,6 +204,88 @@ class RunVideoTests(unittest.TestCase):
         self.assertFalse(saved["passed"])
         self.assertEqual(calls["n"], OLLAMA_ATTEMPTS)
 
+    def test_fact_check_retry_keeps_the_first_topic(self) -> None:
+        class Sequenced:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def choice(self, items):
+                item = items[self.calls % len(items)]
+                self.calls += 1
+                return item
+
+        rng = Sequenced()
+        seen: list[str] = []
+
+        def fake_fact_check(*_args, **_kwargs) -> FactReport:
+            passed = len(seen) > 1
+            return FactReport(
+                passed=passed,
+                blocked=not passed,
+                model="qwen2.5:7b",
+                fixture=False,
+                claims=[
+                    ClaimReport(
+                        id="hook",
+                        claim="The Moon is Earth's only natural satellite.",
+                        source_urls=["https://en.wikipedia.org/wiki/Moon"],
+                        source_text="The Moon is Earth's only natural satellite.",
+                        source_sentences=["The Moon is Earth's only natural satellite."],
+                        llm_supported=passed,
+                        llm_reason="supported" if passed else "retry",
+                        rule_failures=[],
+                        passed=passed,
+                    )
+                ],
+            )
+
+        def ollama_handler(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content.decode())
+            user = body["messages"][1]["content"]
+            payload = json.loads(user.split("\n", 1)[1])
+            topic = payload["topic"]
+            seen.append(topic)
+            script = load_fixture("ollama_script.json")
+            script["topic"] = topic
+            return httpx.Response(
+                200,
+                json={"message": {"role": "assistant", "content": json.dumps(script)}},
+            )
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            topics = root / "topics.csv"
+            topics.write_text(
+                "topic,angle,status\nAlpha,first angle,pending\nBeta,second angle,pending\n",
+                encoding="utf-8",
+            )
+            with httpx.Client(
+                transport=httpx.MockTransport(source_handler),
+                headers=client_headers(),
+            ) as source_client, httpx.Client(
+                transport=httpx.MockTransport(ollama_handler)
+            ) as ollama_client, patch(
+                "edu.scripts.run_video.fact_check",
+                side_effect=fake_fact_check,
+            ):
+                path = complete_video(
+                    "",
+                    source_client=source_client,
+                    ollama_client=ollama_client,
+                    topics_path=topics,
+                    retrieved_at=RETRIEVED,
+                    rng=rng,
+                    out_path=root / "alpha.json",
+                    report_path=root / "fact_report.json",
+                )
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            catalog = topics.read_text(encoding="utf-8")
+        self.assertEqual(rng.calls, 1)
+        self.assertEqual(seen, ["Alpha", "Alpha"])
+        self.assertEqual(saved["topic"], "Alpha")
+        self.assertIn("Alpha,first angle,used", catalog)
+        self.assertIn("Beta,second angle,pending", catalog)
+
 
 if __name__ == "__main__":
     unittest.main()

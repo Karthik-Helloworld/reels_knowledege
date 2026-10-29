@@ -321,7 +321,10 @@ def content_words(value: str) -> list[str]:
 def unsupported_words(text: str, support: str) -> list[str]:
     """Words in ``text`` that do not appear in the cited source sentence.
 
-    The articles a, an, and the are ignored. Every other word must be in the source.
+    The articles a, an, and the are ignored. This is not a generation gate.
+    Requiring every other word made the model paste the source sentence into
+    each line. The fact checker still rejects a date, number, or name that
+    the cited source does not contain.
     """
 
     allowed = set(content_words(support))
@@ -492,8 +495,8 @@ def generate_script(
                         + str(exc)
                         + " Every claim needs at least one real sentence id from its "
                         "source. Do not write citation text. Rewrite the hook, beats, "
-                        "closing, and claims in your own words, and do not invent a "
-                        "number, a date, or a name."
+                        "closing, key_takeaway, and claims in your own words, and do "
+                        "not invent a number, a date, or a name."
                     ),
                 },
             ]

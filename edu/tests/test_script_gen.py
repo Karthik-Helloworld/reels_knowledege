@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import httpx
 
 from edu.niche import NicheConfig
+from edu.scripts.fact_check import fact_check
 from edu.scripts.script_gen import (
     OLLAMA_ATTEMPTS,
     GroundingError,
@@ -357,19 +358,46 @@ class ScriptGenTests(unittest.TestCase):
         self.assertEqual(calls["n"], 2)
         self.assertEqual(result.claims[0].source_url, DOCUMENT.url)
 
-    def test_words_outside_the_cited_sentence_are_rejected(self) -> None:
+    def test_original_wording_is_kept_and_the_citation_stays_exact(self) -> None:
         script = load_fixture("ollama_script.json")
         script["beats"][0]["narration"] = "Imagine the Moon is Earth's only natural satellite."
         with ollama_client(chat_with(script)) as client:
-            with self.assertRaises(GroundingError) as caught:
-                generate_script(
-                    "Why the Moon has phases",
-                    "",
-                    NICHE,
-                    [DOCUMENT],
-                    client,
-                )
-        self.assertIn("Imagine", str(caught.exception))
+            result = generate_script(
+                "Why the Moon has phases",
+                "",
+                NICHE,
+                [DOCUMENT],
+                client,
+            )
+        self.assertIn("Imagine", result.beats[0].narration)
+        self.assertEqual(result.claims[0].source_sentence, DOCUMENT.text)
+        self.assertNotIn("Imagine", result.claims[0].source_sentence)
+
+    def test_tampered_date_still_blocks(self) -> None:
+        script = load_fixture("ollama_script.json")
+        script["beats"][0]["narration"] = "On April 2, 1999 the Moon orbits Earth."
+        script["claims"][0]["text"] = "The Moon was measured on April 2, 1999."
+        with ollama_client(chat_with(script)) as client:
+            result = generate_script(
+                "Why the Moon has phases",
+                "",
+                NICHE,
+                [DOCUMENT],
+                client,
+            )
+        self.assertEqual(result.claims[0].source_sentence, DOCUMENT.text)
+        self.assertNotIn("1999", result.claims[0].source_sentence)
+        report = fact_check(
+            result,
+            [DOCUMENT],
+            niche=NICHE,
+            llm_payload=load_fixture("fact_llm_pass.json"),
+        )
+        self.assertFalse(report.passed)
+        self.assertTrue(report.blocked)
+        beat = next(claim for claim in report.claims if claim.id == "beat-0")
+        self.assertIn("date not in source: April 2, 1999", beat.rule_failures)
+        self.assertFalse(beat.passed)
 
     def test_empty_closing_is_retried_and_not_accepted(self) -> None:
         script = load_fixture("ollama_script.json")
