@@ -1,0 +1,12 @@
+{
+  "topic": "Why the Moon has phases",
+  "hook": "The bright part of the Moon changes shape all month.",
+  "beats": [
+    {
+      "narration": "The Moon is Earth's only natural satellite.",
+      "on_screen": "Earth's satellite",
+      "source_url": "https://en.wikipedia.org/wiki/Moon"
+    }
+  ],
+  "closing": "That is the Moon, from the source above."
+}

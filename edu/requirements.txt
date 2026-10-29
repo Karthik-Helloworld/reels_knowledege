@@ -1,0 +1,5 @@
+# Phase 1 content pipeline. `make edu-setup` installs this file.
+# Hello-world render does not import these packages.
+httpx>=0.27,<1
+pydantic>=2.6,<3
+PyYAML>=6,<7

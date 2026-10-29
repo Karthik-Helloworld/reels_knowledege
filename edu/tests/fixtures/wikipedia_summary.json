@@ -1,0 +1,9 @@
+{
+  "title": "Moon",
+  "extract": "The Moon is Earth's only natural satellite.",
+  "content_urls": {
+    "desktop": {
+      "page": "https://en.wikipedia.org/wiki/Moon"
+    }
+  }
+}

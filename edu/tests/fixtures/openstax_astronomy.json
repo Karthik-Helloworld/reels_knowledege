@@ -1,0 +1,17 @@
+{
+  "meta": {"total_count": 1},
+  "items": [
+    {
+      "title": "Astronomy 2e",
+      "description": "<p>Designed to meet the scope and sequence of your course, <i>Astronomy 2e</i> explains the sky.</p>",
+      "authors": [
+        {"type": "author", "value": {"name": "Andrew Fraknoi"}}
+      ],
+      "license_name": "Creative Commons Attribution-NonCommercial-ShareAlike License",
+      "license_version": "4.0",
+      "meta": {
+        "html_url": "https://openstax.org/details/books/astronomy-2e"
+      }
+    }
+  ]
+}

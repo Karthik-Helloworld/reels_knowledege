@@ -1,6 +1,8 @@
 # reels_knowledege
 
-Local educational Reels and Shorts pipeline. Phase 0 is a Remotion core that renders one short hello-world video. It does not generate scripts, check facts, publish, or build a queue.
+Local educational Reels and Shorts pipeline.
+
+Phase 0 is a Remotion core that renders one short hello-world video. Phase 1 picks a topic, fetches sources, and writes a grounded script. Nothing here fact-checks, renders an educational scene, reviews, or publishes.
 
 ## What exists
 
@@ -41,7 +43,38 @@ The render uses one Chrome process and software GL so it can run without a GPU.
 make edu-test
 ```
 
-Python tests cover TTS, captions, and the theme constants in `core/utils.py`. `make edu-test` also typechecks the Remotion project.
+Python tests cover TTS, captions, and the theme constants in `core/utils.py`. `make edu-test` also runs the Phase 1 tests and typechecks the Remotion project.
+
+## Phase 1: topic, sources, and a grounded script
+
+The default niche in `edu/config/niche.yaml` is `science & space facts`.
+
+`make edu-video` resolves a topic, fetches one record from each source, and asks local Ollama for a short JSON script. Every beat must cite a URL that was just retrieved. The angle in `edu/topics.csv` is a hint, not a source.
+
+Sources, each stored as title, text, url, license, author, and retrieved_at:
+
+- Wikipedia, found by search, then the REST summary. License `CC BY-SA 4.0`.
+- NASA Image and Video Library. No API key.
+- OpenStax books. The text is the book description. If the topic matches no title, the niche searches `astronomy`.
+- Wikimedia Commons. License and author come from the file metadata.
+
+```bash
+make edu-setup
+make edu-video TOPIC="Why the Moon has phases"
+```
+
+`make edu-setup` also installs `edu/requirements.txt`. Leave `TOPIC` empty to let `edu/scripts/topic_picker.py` choose a row from `edu/topics.csv`.
+
+Output: `edu/out/<topic>.json` with the sources and the script. That directory is gitignored. Ollama has to be running locally. The host and model come from the niche file, or from `OLLAMA_HOST` and `OLLAMA_MODEL` in the environment. This file is not loaded for you.
+
+```bash
+ollama serve
+ollama pull llama3.2
+```
+
+`make edu-test` covers the source adapters with mock HTTP and the script generator with an Ollama fixture. Those tests do not call the network or Ollama.
+
+`make edu-video` does not render a video. The hello-world render is still `make edu-render-hello`.
 
 ## Mac install (MacBook Air M4, 16GB)
 
