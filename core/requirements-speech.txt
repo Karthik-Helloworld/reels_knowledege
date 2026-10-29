@@ -1,0 +1,6 @@
+# Speech and captions for a 16GB Mac. Not installed by make edu-setup.
+# av 19 dropped metadata_errors, which faster-whisper still passes to av.open.
+piper-tts
+edge-tts
+faster-whisper
+av>=14.2,<19

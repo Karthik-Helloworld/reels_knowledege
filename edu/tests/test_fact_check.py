@@ -156,7 +156,8 @@ class FactCheckTests(unittest.TestCase):
         self.assertTrue(seen["url"].endswith("/api/chat"))
         self.assertEqual(seen["body"]["model"], "llama3.2")
         self.assertIs(seen["body"]["stream"], False)
-        self.assertEqual(seen["body"]["format"], "json")
+        self.assertEqual(seen["body"]["format"]["type"], "object")
+        self.assertIn("claims", seen["body"]["format"]["required"])
         user = seen["body"]["messages"][1]["content"]
         self.assertIn("The Moon is Earth's only natural satellite.", user)
         self.assertIn("https://en.wikipedia.org/wiki/Moon", user)
