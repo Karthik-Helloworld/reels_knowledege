@@ -1,0 +1,10 @@
+# Phase 0 Python environment.
+# `make edu-setup` creates .venv and installs this file.
+# Hello-world render does not import any of the packages below.
+#
+# Piper and faster-whisper are left out of this file on purpose: the model
+# runtimes are large, and this cloud VM does not need them to render.
+# Install them on a Mac when you want speech and captions (see README).
+#
+#   .venv/bin/pip install piper-tts edge-tts faster-whisper
+#   .venv/bin/python -m piper.download_voices en_US-lessac-medium
