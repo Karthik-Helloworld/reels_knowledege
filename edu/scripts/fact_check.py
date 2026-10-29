@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict
 
 from core.utils import ensure_parent
 from edu.niche import NicheConfig, load_niche
-from edu.scripts.script_gen import GroundingError, ReelScript, ollama_chat
+from edu.scripts.script_gen import OLLAMA_ATTEMPTS, GroundingError, ReelScript, ollama_chat
 from edu.sources.http import make_client
 from edu.sources.model import SourceDocument
 
@@ -104,8 +104,10 @@ class _Claim:
         rule_text: str,
         source_urls: list[str],
         source_text: str,
+        report_id: str | None = None,
     ) -> None:
         self.id = claim_id
+        self.report_id = report_id or claim_id
         self.text = text
         self.rule_text = rule_text
         self.source_urls = source_urls
@@ -148,11 +150,38 @@ def build_claims(script: ReelScript, documents: list[SourceDocument]) -> list[_C
                 document.text,
             )
         )
-    shared_urls = list(dict.fromkeys(document.url for document in cited))
-    shared_text = "\n".join(dict.fromkeys(document.text for document in cited))
-    shared = _Claim("hook", script.hook, script.hook, shared_urls, shared_text)
-    closing = _Claim("closing", script.closing, script.closing, shared_urls, shared_text)
-    return [shared, *claims, *missing, closing]
+    return [
+        *_one_source_each("hook", script.hook, cited),
+        *claims,
+        *missing,
+        *_one_source_each("closing", script.closing, cited),
+    ]
+
+
+def _unique_documents(documents: list[SourceDocument]) -> list[SourceDocument]:
+    seen: set[str] = set()
+    unique: list[SourceDocument] = []
+    for document in documents:
+        if document.url in seen:
+            continue
+        seen.add(document.url)
+        unique.append(document)
+    return unique
+
+
+def _one_source_each(kind: str, text: str, cited: list[SourceDocument]) -> list[_Claim]:
+    """Check hook or closing against each cited source, never the pooled text."""
+    documents = _unique_documents(cited)
+    if not documents:
+        return [_Claim(kind, text, text, [], "")]
+    total = len(documents)
+    parts: list[_Claim] = []
+    for index, document in enumerate(documents):
+        part_id = kind if total == 1 else f"{kind}:{index}"
+        parts.append(
+            _Claim(part_id, text, text, [document.url], document.text, kind)
+        )
+    return parts
 
 
 def _overlaps(span: tuple[int, int], spans: list[tuple[int, int]]) -> bool:
@@ -189,6 +218,10 @@ def _name_in_text(name: str, source: str) -> bool:
 
 
 def extract_names(text: str) -> list[str]:
+    """Best-effort proper names. Ordinary capitalized nouns can match too.
+
+    A name-rule miss blocks the claim even when the model marks it supported.
+    """
     names: list[str] = []
     spans: list[tuple[int, int]] = []
     for match in _MULTI_NAME.finditer(text):
@@ -340,41 +373,27 @@ def fact_check(
         if not checkable:
             payload = {"claims": []}
         else:
-            try:
-                payload = ollama_chat(
-                    client,
-                    niche.ollama_host,
-                    niche.ollama_model,
-                    build_messages(checkable),
-                )
-            except GroundingError as exc:
+            messages = build_messages(checkable)
+            last_error: GroundingError | None = None
+            for _attempt in range(OLLAMA_ATTEMPTS):
+                try:
+                    payload = ollama_chat(
+                        client,
+                        niche.ollama_host,
+                        niche.ollama_model,
+                        messages,
+                    )
+                    break
+                except GroundingError as exc:
+                    last_error = exc
+                    payload = None
+            if payload is None:
+                assert last_error is not None
                 raise FactCheckError(
-                    f"fact check blocked the video. Ollama verdict was unusable: {exc}"
-                ) from exc
+                    f"fact check blocked the video. Ollama verdict was unusable: {last_error}"
+                ) from last_error
     verdicts = parse_verdicts(payload, [claim.id for claim in checkable])
-    results: list[ClaimReport] = []
-    for claim in claims:
-        if not claim.source_text:
-            supported = False
-            reason = "cited source was not retrieved"
-            failures = ["cited source was not retrieved"]
-        else:
-            supported, reason = verdicts[claim.id]
-            failures = rule_failures(claim.rule_text, claim.source_text)
-        passed = supported and not failures
-        results.append(
-            ClaimReport(
-                id=claim.id,
-                claim=claim.text,
-                source_urls=claim.source_urls,
-                source_text=claim.source_text,
-                source_sentences=claim.source_sentences,
-                llm_supported=supported,
-                llm_reason=reason,
-                rule_failures=failures,
-                passed=passed,
-            )
-        )
+    results = [_report_for_group(group, verdicts) for group in _groups(claims)]
     passed = bool(results) and all(item.passed for item in results)
     return FactReport(
         passed=passed,
@@ -382,6 +401,67 @@ def fact_check(
         model=niche.ollama_model,
         fixture=llm_payload is not None,
         claims=results,
+    )
+
+
+def _groups(claims: list[_Claim]) -> list[list[_Claim]]:
+    grouped: list[list[_Claim]] = []
+    index_by_id: dict[str, int] = {}
+    for claim in claims:
+        slot = index_by_id.get(claim.report_id)
+        if slot is None:
+            index_by_id[claim.report_id] = len(grouped)
+            grouped.append([claim])
+        else:
+            grouped[slot].append(claim)
+    return grouped
+
+
+def _report_for_group(
+    group: list[_Claim],
+    verdicts: dict[str, tuple[bool, str]],
+) -> ClaimReport:
+    first = group[0]
+    if len(group) == 1 and not first.source_text:
+        return ClaimReport(
+            id=first.report_id,
+            claim=first.text,
+            source_urls=first.source_urls,
+            source_text="",
+            source_sentences=[],
+            llm_supported=False,
+            llm_reason="cited source was not retrieved",
+            rule_failures=["cited source was not retrieved"],
+            passed=False,
+        )
+    evaluations: list[tuple[_Claim, bool, str, list[str]]] = []
+    for claim in group:
+        supported, reason = verdicts[claim.id]
+        failures = rule_failures(claim.rule_text, claim.source_text)
+        evaluations.append((claim, supported, reason, failures))
+    winners = [item for item in evaluations if item[1] and not item[3]]
+    if winners:
+        claim, supported, reason, failures = winners[0]
+        passed = True
+    else:
+        supported_ones = [item for item in evaluations if item[1]]
+        pool = supported_ones or evaluations
+        claim, supported, reason, failures = min(pool, key=lambda item: len(item[3]))
+        if len(group) > 1 and not supported:
+            reason = "no single cited source supports this claim"
+        passed = False
+    # Both the model and the rules have to pass, and they have to pass on the
+    # same source. A capitalized ordinary noun can false-block a good script.
+    return ClaimReport(
+        id=claim.report_id,
+        claim=claim.text,
+        source_urls=claim.source_urls,
+        source_text=claim.source_text,
+        source_sentences=claim.source_sentences,
+        llm_supported=supported,
+        llm_reason=reason,
+        rule_failures=failures,
+        passed=passed and supported and not failures,
     )
 
 
@@ -430,6 +510,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--report", type=Path, default=None)
     parser.add_argument("--niche", type=Path, default=None)
     args = parser.parse_args(argv)
+    if args.llm_fixture is not None and not args.llm_fixture.is_file():
+        print(
+            f"fact-check: fact-check fixture not found: {args.llm_fixture}",
+            file=sys.stderr,
+        )
+        return 1
     package = json.loads(args.package.read_text(encoding="utf-8"))
     script, documents = package_parts(package)
     niche = load_niche(args.niche)

@@ -193,6 +193,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Canned fact-check verdict. Skips the second Ollama call.",
     )
     args = parser.parse_args(argv)
+    if args.fact_fixture is not None and not args.fact_fixture.is_file():
+        print(
+            f"edu-video: fact-check fixture not found: {args.fact_fixture}",
+            file=sys.stderr,
+        )
+        return 1
     fact_llm = load_llm_fixture(args.fact_fixture) if args.fact_fixture else None
     try:
         config = load_niche(args.niche or niche_path())

@@ -1,7 +1,9 @@
 import json
 import shutil
 import unittest
+from contextlib import redirect_stderr
 from datetime import datetime, timezone
+from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -9,7 +11,8 @@ from unittest.mock import patch
 import httpx
 
 from edu.niche import NicheConfig
-from edu.scripts.fact_check import fact_check, main as fact_main, package_parts
+from edu.scripts.fact_check import FactCheckError, fact_check, package_parts
+from edu.scripts.fact_check import main as fact_main
 from edu.scripts.run_video import main as video_main
 from edu.scripts.script_gen import ReelScript
 from edu.sources.http import client_headers
@@ -278,6 +281,150 @@ class FactCheckTests(unittest.TestCase):
         self.assertEqual(package["fact_check"]["report"], "fact_report.json")
         self.assertTrue(report["passed"])
         self.assertFalse(report["blocked"])
+
+    def test_hook_cannot_combine_two_sources(self) -> None:
+        moon = "https://en.wikipedia.org/wiki/Moon"
+        other = "https://example.com/other"
+        script = ReelScript.model_validate(
+            {
+                "topic": "Why the Moon has phases",
+                "hook": "Andrew Fraknoi measured 384400 kilometers.",
+                "beats": [
+                    {
+                        "narration": "The Moon is Earth's only natural satellite.",
+                        "on_screen": "Earth's satellite",
+                        "source_url": moon,
+                    },
+                    {
+                        "narration": "Andrew Fraknoi wrote this note.",
+                        "on_screen": "note",
+                        "source_url": other,
+                    },
+                ],
+                "closing": "The Moon is Earth's only natural satellite.",
+                "key_takeaway": "The Moon is Earth's only natural satellite.",
+                "cta": "Look up tonight.",
+                "claims": [
+                    {
+                        "text": "The Moon is Earth's only natural satellite.",
+                        "source_url": moon,
+                        "source_sentence": "The Moon is Earth's only natural satellite.",
+                    }
+                ],
+            }
+        )
+        documents = [
+            SourceDocument(
+                title="Moon",
+                text=(
+                    "The Moon is Earth's only natural satellite. "
+                    "It averages 384400 kilometers away."
+                ),
+                url=moon,
+                license="CC BY-SA 4.0",
+                author="Wikipedia contributors",
+                retrieved_at=RETRIEVED,
+            ),
+            SourceDocument(
+                title="Other",
+                text="Andrew Fraknoi wrote this note.",
+                url=other,
+                license="CC BY 4.0",
+                author="Ada",
+                retrieved_at=RETRIEVED,
+            ),
+        ]
+        verdict = {
+            "claims": [
+                {"id": "hook:0", "supported": True, "reason": "The cited source states this."},
+                {"id": "hook:1", "supported": True, "reason": "The cited source states this."},
+                {"id": "beat-0", "supported": True, "reason": "The cited source states this."},
+                {"id": "beat-1", "supported": True, "reason": "The cited source states this."},
+                {"id": "closing:0", "supported": True, "reason": "The cited source states this."},
+                {
+                    "id": "closing:1",
+                    "supported": False,
+                    "reason": "This source does not state the closing.",
+                },
+            ]
+        }
+        report = fact_check(script, documents, niche=NICHE, llm_payload=verdict)
+        hook = next(claim for claim in report.claims if claim.id == "hook")
+        closing = next(claim for claim in report.claims if claim.id == "closing")
+        self.assertTrue(hook.llm_supported)
+        self.assertFalse(hook.passed)
+        self.assertEqual(hook.source_urls, [moon])
+        self.assertNotIn("Andrew Fraknoi", hook.source_text)
+        self.assertNotIn("wrote this note", hook.source_text)
+        self.assertTrue(closing.passed)
+        self.assertEqual(closing.source_urls, [moon])
+        self.assertNotIn("Andrew Fraknoi", closing.source_text)
+        self.assertFalse(report.passed)
+
+    def test_malformed_verdict_is_retried(self) -> None:
+        calls = {"n": 0}
+        verdict = load_fixture("fact_llm_pass.json")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            content = "not-json" if calls["n"] == 1 else json.dumps(verdict)
+            return httpx.Response(
+                200,
+                json={"message": {"role": "assistant", "content": content}},
+            )
+
+        script, documents = package_parts(load_fixture("fact_package_pass.json"))
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            report = fact_check(script, documents, niche=NICHE, client=client)
+        self.assertEqual(calls["n"], 2)
+        self.assertTrue(report.passed)
+        self.assertFalse(report.fixture)
+
+    def test_malformed_verdict_blocks_after_three_attempts(self) -> None:
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            return httpx.Response(
+                200,
+                json={"message": {"role": "assistant", "content": "not-json"}},
+            )
+
+        script, documents = package_parts(load_fixture("fact_package_pass.json"))
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            with self.assertRaises(FactCheckError):
+                fact_check(script, documents, niche=NICHE, client=client)
+        self.assertEqual(calls["n"], 3)
+
+    def test_missing_fact_fixture_names_the_file(self) -> None:
+        err = StringIO()
+        with redirect_stderr(err):
+            code = video_main(
+                [
+                    "--topic",
+                    "Why the Moon has phases",
+                    "--fact-fixture",
+                    "edu/out/missing-fact-fixture.json",
+                ]
+            )
+        self.assertEqual(code, 1)
+        self.assertIn("fact-check fixture not found", err.getvalue())
+        self.assertIn("missing-fact-fixture.json", err.getvalue())
+
+    def test_fact_check_cli_names_a_missing_fixture(self) -> None:
+        err = StringIO()
+        with redirect_stderr(err):
+            code = fact_main(
+                [
+                    "--package",
+                    "edu/tests/fixtures/fact_package_pass.json",
+                    "--llm-fixture",
+                    "edu/out/missing-fact-fixture.json",
+                ]
+            )
+        self.assertEqual(code, 1)
+        self.assertIn("fact-check fixture not found", err.getvalue())
+        self.assertIn("missing-fact-fixture.json", err.getvalue())
 
 
 if __name__ == "__main__":
