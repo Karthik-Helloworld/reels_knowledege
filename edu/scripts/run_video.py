@@ -4,13 +4,16 @@
 the video: the script package is not written, and the process exits non-zero.
 A passing report writes the package, marks the topic used, and renders an mp4.
 If fetch or Ollama is down, a checked-in fixture is fact-checked and rendered
-instead. That fallback does not mark a topic used.
+instead. That fallback does not mark a topic used. A blank script field is
+rejected and retried; if it is still blank, the command exits.
+EDU_NO_FIXTURE=1 skips the fixture on any live failure.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import re
 import shutil
@@ -33,7 +36,7 @@ from edu.scripts.fact_check import (
 )
 from edu.scripts.pending import stage_pending
 from edu.scripts.render_reel import render_reel
-from edu.scripts.script_gen import GroundingError, generate_script
+from edu.scripts.script_gen import OLLAMA_ATTEMPTS, GroundingError, generate_script
 from edu.scripts.topic_picker import (
     TopicChoice,
     default_topics_path,
@@ -62,9 +65,12 @@ def build_package(
     topics_path: Path | None = None,
     retrieved_at: datetime | None = None,
     rng: random.Random | None = None,
+    correction: str | None = None,
+    choice: TopicChoice | None = None,
 ) -> dict:
     config = niche or load_niche()
-    choice: TopicChoice = pick_topic(topic, topics_path, rng=rng)
+    resolved = choice if choice is not None else pick_topic(topic, topics_path, rng=rng)
+    choice = resolved
     stamp = retrieved_at or datetime.now(timezone.utc)
     fetched = fetch_sources(
         choice.topic,
@@ -91,6 +97,7 @@ def build_package(
         niche=config,
         documents=documents,
         client=ollama_client,
+        correction=correction,
     )
     return {
         "niche": config.name,
@@ -134,34 +141,50 @@ def complete_video(
     report_path: Path | None = None,
     fact_llm: dict | None = None,
 ) -> Path:
-    """Generate a script, write fact_report.json, and keep the package only if it passes."""
+    """Generate a script, write fact_report.json, and keep the package only if it passes.
+
+    A failed fact check is sent back to the script generator. The loop stops
+    when a script passes or ``OLLAMA_ATTEMPTS`` runs are exhausted.
+    """
     config = niche or load_niche()
-    package = build_package(
-        topic,
-        source_client=source_client,
-        ollama_client=ollama_client,
-        niche=config,
-        topics_path=topics_path,
-        retrieved_at=retrieved_at,
-        rng=rng,
-    )
-    script, documents = package_parts(package)
-    report = fact_check(
-        script,
-        documents,
-        niche=config,
-        client=ollama_client,
-        llm_payload=fact_llm,
-    )
-    destination = out_path or default_output_path(str(package["topic"]))
-    report_destination = report_path or default_report_path(destination)
-    write_report(report, report_destination)
-    if not report.passed:
-        raise FactCheckError(
-            format_block_message(report) + f"\nReport: {report_destination}"
+    choice = pick_topic(topic, topics_path, rng=rng)
+    correction: str | None = None
+    report = None
+    report_destination: Path | None = None
+    for _attempt in range(OLLAMA_ATTEMPTS):
+        package = build_package(
+            topic,
+            source_client=source_client,
+            ollama_client=ollama_client,
+            niche=config,
+            topics_path=topics_path,
+            retrieved_at=retrieved_at,
+            rng=rng,
+            correction=correction,
+            choice=choice,
         )
-    package["fact_check"] = {"passed": True, "report": report_destination.name}
-    return save_successful_package(package, destination, topics_path)
+        script, documents = package_parts(package)
+        report = fact_check(
+            script,
+            documents,
+            niche=config,
+            client=ollama_client,
+            llm_payload=fact_llm,
+        )
+        destination = out_path or default_output_path(str(package["topic"]))
+        report_destination = report_path or default_report_path(destination)
+        write_report(report, report_destination)
+        if report.passed:
+            package["fact_check"] = {"passed": True, "report": report_destination.name}
+            return save_successful_package(package, destination, topics_path)
+        correction = (
+            "Fact check rejected the script. "
+            "Keep the same sentence ids and rewrite the wording. "
+            "Do not invent a number, a date, or a name.\n"
+            + format_block_message(report)
+        )
+    assert report is not None and report_destination is not None
+    raise FactCheckError(format_block_message(report) + f"\nReport: {report_destination}")
 
 
 def fixture_package_path() -> Path:
@@ -221,6 +244,21 @@ def write_video_package(
         )
 
 
+def _script_field_was_blank(exc: BaseException) -> bool:
+    text = str(exc).casefold()
+    return any(
+        marker in text
+        for marker in ("must not be blank", "at least 1 character", "string_too_short")
+    )
+
+
+def _reject_instead_of_fixture(exc: BaseException) -> bool:
+    """A blank script field is a rejected script, not a reason to render the fixture."""
+    if os.environ.get("EDU_NO_FIXTURE") == "1":
+        return True
+    return _script_field_was_blank(exc)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Fetch sources, write a grounded script, and fact-check it."
@@ -266,6 +304,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"edu-video: {exc}", file=sys.stderr)
         return 1
     except (httpx.ConnectError, GroundingError, SourceError, httpx.HTTPError) as exc:
+        if _reject_instead_of_fixture(exc):
+            print(f"edu-video: {exc}", file=sys.stderr)
+            return 1
         print(
             "edu-video: live fetch or Ollama is unavailable "
             f"({exc}). Fact-checking the fixture package and rendering that. "

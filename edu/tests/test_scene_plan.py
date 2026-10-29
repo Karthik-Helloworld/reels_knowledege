@@ -215,6 +215,48 @@ class ScenePlanTests(unittest.TestCase):
             self.assertTrue(stored["passed"])
             self.assertEqual(topics.read_text(encoding="utf-8"), before)
 
+    def test_blank_closing_exits_instead_of_the_fixture(self) -> None:
+        from edu.scripts.script_gen import GroundingError
+
+        error = GroundingError(
+            "script JSON did not match the schema: closing\n"
+            "  String should have at least 1 character [type=string_too_short]"
+        )
+        with patch(
+            "edu.scripts.run_video.complete_video",
+            side_effect=error,
+        ), patch("edu.scripts.run_video.write_fixture_package") as fixture, patch(
+            "edu.scripts.run_video.render_reel"
+        ) as render:
+            code = video_main(["--topic", "Black hole", "--no-render"])
+        self.assertEqual(code, 1)
+        fixture.assert_not_called()
+        render.assert_not_called()
+
+        blank_takeaway = GroundingError(
+            "script JSON did not match the schema: key_takeaway\n"
+            "  Value error, must not be blank [type=value_error]"
+        )
+        with patch(
+            "edu.scripts.run_video.complete_video",
+            side_effect=blank_takeaway,
+        ), patch("edu.scripts.run_video.write_fixture_package") as takeaway_fixture:
+            code = video_main(["--topic", "Black hole", "--no-render"])
+        self.assertEqual(code, 1)
+        takeaway_fixture.assert_not_called()
+
+    def test_live_run_can_refuse_the_fixture(self) -> None:
+        from edu.scripts.script_gen import GroundingError
+
+        error = GroundingError("hook uses words that are not in the cited sentence: Imagine")
+        with patch.dict(os.environ, {"EDU_NO_FIXTURE": "1"}), patch(
+            "edu.scripts.run_video.complete_video",
+            side_effect=error,
+        ), patch("edu.scripts.run_video.write_fixture_package") as fixture:
+            code = video_main(["--topic", "Black hole", "--no-render"])
+        self.assertEqual(code, 1)
+        fixture.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
