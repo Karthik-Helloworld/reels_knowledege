@@ -16,6 +16,7 @@ class SourceDocument(BaseModel):
     license: str
     author: str
     retrieved_at: datetime
+    image_url: str | None = None
 
     @field_validator("title", "text", "license", "author")
     @classmethod
@@ -31,6 +32,18 @@ class SourceDocument(BaseModel):
         cleaned = value.strip()
         if not cleaned.startswith(("http://", "https://")):
             raise ValueError("url must be http or https")
+        return cleaned
+
+    @field_validator("image_url")
+    @classmethod
+    def optional_http(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        if not cleaned.startswith(("http://", "https://")):
+            raise ValueError("image_url must be http or https")
         return cleaned
 
     @field_validator("retrieved_at")

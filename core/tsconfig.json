@@ -9,7 +9,14 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "moduleResolution": "node",
+    "baseUrl": ".",
+    "paths": {
+      "react": ["node_modules/@types/react"],
+      "react/jsx-runtime": ["node_modules/@types/react/jsx-runtime"],
+      "react-dom": ["node_modules/@types/react-dom"],
+      "remotion": ["node_modules/remotion"]
+    },
     "lib": ["es2018", "dom"]
   },
-  "include": ["src", "remotion.config.ts"]
+  "include": ["src", "remotion.config.ts", "../edu/remotion"]
 }

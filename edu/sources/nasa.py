@@ -59,7 +59,7 @@ def fetch_nasa(
         except SourceError as exc:
             metadata_errors.append(exc)
             continue
-        if not _public_domain_or_cc0(terms):
+        if not public_domain_or_cc0(terms):
             continue
         author = str(
             data.get("secondary_creator")
@@ -76,6 +76,7 @@ def fetch_nasa(
                 license=terms,
                 author=author,
                 retrieved_at=retrieved_at,
+                image_url=_image_href(item),
             )
         ]
     if metadata_errors:
@@ -98,7 +99,20 @@ def _usage_terms(client: httpx.Client, nasa_id: str) -> str:
     return "\n".join(chunks)
 
 
-def _public_domain_or_cc0(terms: str) -> bool:
+def _image_href(item: dict) -> str | None:
+    for link in item.get("links") or []:
+        if not isinstance(link, dict):
+            continue
+        href = str(link.get("href") or "").strip()
+        if not href.startswith(("http://", "https://")):
+            continue
+        path = href.lower().split("?", 1)[0]
+        if any(path.endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp")):
+            return href
+    return None
+
+
+def public_domain_or_cc0(terms: str) -> bool:
     folded = terms.casefold()
     if not folded:
         return False

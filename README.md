@@ -2,7 +2,7 @@
 
 Local educational Reels and Shorts pipeline.
 
-Phase 0 is a Remotion core that renders one short hello-world video. Phase 1 picks a topic, fetches sources, and writes a grounded script. Phase 2 checks that script against the cited sources and blocks the video when a claim fails. Nothing here renders an educational scene, reviews, or publishes.
+Phase 0 is a Remotion core that renders one short hello-world video. Phase 1 picks a topic, fetches sources, and writes a grounded script. Phase 2 checks that script against the cited sources and blocks the video when a claim fails. Phase 3 renders that script with the same Remotion engine. Nothing here reviews or publishes.
 
 ## What exists
 
@@ -43,7 +43,7 @@ The render uses one Chrome process and software GL so it can run without a GPU.
 make edu-test
 ```
 
-Python tests cover TTS, captions, and the theme constants in `core/utils.py`. `make edu-test` also runs the Phase 1 and Phase 2 tests and typechecks the Remotion project. The Phase 2 tests use fixtures and do not call Ollama.
+Python tests cover TTS, captions, and the theme constants in `core/utils.py`. `make edu-test` also runs the Phase 1, Phase 2, and Phase 3 tests and typechecks the Remotion project. Those tests use fixtures and do not call Ollama or render a video.
 
 ## Phase 1: topic, sources, and a grounded script
 
@@ -110,6 +110,26 @@ make edu-video TOPIC="Why the Moon has phases" FACT_FIXTURE=edu/tests/fixtures/f
 `make edu-test` covers the pass fixture, the low-support fixture, the missing number/date/name fixture, a hook that mixes facts from two sources, a retried bad verdict, and a failed claim that stops `edu-video` before it writes the package. Those tests do not call Ollama. A missing `FACT_FIXTURE` path exits with `fact-check fixture not found` and the path.
 
 Phase 2 does not render an educational scene, review, or publish.
+
+## Phase 3: render the reel
+
+`make edu-video` fact-checks the script, then renders one vertical video with the Remotion project in `core/`. The scenes live in `edu/remotion` and import `core/src/theme.ts`. They do not copy the theme, the renderer, TTS, or captions.
+
+Scenes, in order: Hook, Concept, Diagram, Timeline, Stat, call to action, then Source credit. The credit card is the last 2 seconds and reads `Source: <author>, <license>`. Word-by-word captions sit above the bottom 250px and left of the right 120px. The file is 1080×1920, 30fps, H.264. Its length is the audio length plus those 2 seconds.
+
+Speech uses `core/tts.py` (Piper, then edge-tts). Captions use `core/captions.py` (faster-whisper). If those packages are missing, the render still finishes: a 36 second generated tone stands in for speech, and captions are spaced evenly across the script. 36 seconds of tone plus the 2 second credit is 38 seconds, inside the 30-45 second target. Real speech shorter than 30 seconds is padded with silence to 36 seconds. Real speech longer than 45 seconds is kept whole.
+
+Visuals are drawn in code. A Wikimedia Commons or NASA still is the one exception, and only when that asset's license allows reuse (Commons: CC0, CC BY, CC BY-SA, or public domain; NASA: public domain or CC0). That still gets a slow Ken Burns move on the diagram scene.
+
+The render also writes a caption file next to the mp4. It is the post text, not an upload. Each source is listed with title, URL, license, and author, then 5 to 8 hashtags.
+
+```bash
+make edu-video TOPIC="Black hole"
+```
+
+If fetch or Ollama is down, the command says so, fact-checks `edu/tests/fixtures/render_package.json` with `edu/tests/fixtures/render_llm_pass.json`, and renders that package. A failed fact check on a live script still stops the run and does not render. The fixture path does not mark a row in `edu/topics.csv` as used. No publisher login is required.
+
+Output, for that topic: `edu/out/black-hole.mp4` and `edu/out/black-hole.caption.txt`. `edu/out/` is gitignored.
 
 ## Mac install (MacBook Air M4, 16GB)
 

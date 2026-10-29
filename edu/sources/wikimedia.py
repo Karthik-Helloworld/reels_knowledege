@@ -115,6 +115,11 @@ def _page_document(page: dict, retrieved_at: datetime) -> SourceDocument | None:
         return None
     if not license_reusable(license_name):
         return None
+    image_url = str(info.get("url") or "").strip()
+    if image_url.startswith("//"):
+        image_url = "https:" + image_url
+    if image_url and not image_url.startswith(("http://", "https://")):
+        image_url = ""
     return SourceDocument(
         title=title,
         text=text,
@@ -122,4 +127,5 @@ def _page_document(page: dict, retrieved_at: datetime) -> SourceDocument | None:
         license=license_name,
         author=author,
         retrieved_at=retrieved_at,
+        image_url=image_url or None,
     )

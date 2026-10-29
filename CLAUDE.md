@@ -38,7 +38,7 @@ Fix every unchecked Blocker and Should-fix on this PR's existing branch, run tes
 
 # Global requirements (all channels)
 - Free and local only: no paid APIs, keys or subscriptions. Flag any new paid dependency.
-- Video: 1080x1920, 30fps, H.264, CRF 20 (long-form 1920x1080), duration set from audio length, captions inside the Instagram safe zone (avoid bottom 250px and right 120px), brand look from one theme file, all visuals code-generated (no stock footage or scraped media).
+- Video: 1080x1920, 30fps, H.264, CRF 20 (long-form 1920x1080), duration set from audio length, captions inside the Instagram safe zone (avoid bottom 250px and right 120px), brand look from one theme file, all visuals code-generated (no stock footage or scraped media). The one exception is a single still on the diagram scene: NASA public domain or CC0, or Wikimedia Commons with license CC0, CC BY, CC BY-SA, or public domain. That still may use Ken Burns. No other downloaded media.
 - Piper TTS default (edge-tts optional fallback); word-level captions via faster-whisper.
 - Strong typing and validation (pydantic/zod), clear errors, retries with backoff on network calls, mocked-HTTP tests (no live network in tests).
 - No secrets/.env committed; .env.example exists; .gitignore covers /out, node_modules, venv, audio, models.
@@ -54,4 +54,5 @@ Fix every unchecked Blocker and Should-fix on this PR's existing branch, run tes
 - Grounded script gen: uses ONLY fetched source text; hook max 8 words, 4-6 narration lines, key takeaway, CTA, claims[] each citing an exact supporting source sentence (verify the citation exists in the source text); original wording.
 - fact_check.py blocks the video on any unsupported claim and writes fact_report.json.
 - On-screen "Source: <name>, <license>" for 2s at the end; full attribution in the caption; AI-disclosure setting; audit log in SQLite.
+- Diagram scene may show the one licensed still described above. Every other visual is code-generated.
 - Review gate: output goes to /out/pending, nothing publishes without approval.

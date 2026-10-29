@@ -1,8 +1,10 @@
-"""Build one reel package, then fact-check it before keeping the file.
+"""Build one reel package, fact-check it, then render it.
 
 `make edu-video TOPIC="..."` calls this module. A failed fact report blocks
 the video: the script package is not written, and the process exits non-zero.
-A passing report writes the package and marks the topic used.
+A passing report writes the package, marks the topic used, and renders an mp4.
+If fetch or Ollama is down, a checked-in fixture is fact-checked and rendered
+instead. That fallback does not mark a topic used.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ from edu.scripts.fact_check import (
     package_parts,
     write_report,
 )
+from edu.scripts.render_reel import render_reel
 from edu.scripts.script_gen import GroundingError, generate_script
 from edu.scripts.topic_picker import (
     TopicChoice,
@@ -159,6 +162,45 @@ def complete_video(
     return save_successful_package(package, destination, topics_path)
 
 
+def fixture_package_path() -> Path:
+    return repo_root() / "edu" / "tests" / "fixtures" / "render_package.json"
+
+
+def fixture_verdict_path() -> Path:
+    return repo_root() / "edu" / "tests" / "fixtures" / "render_llm_pass.json"
+
+
+def write_fixture_package(
+    *,
+    out_path: Path | None = None,
+    report_path: Path | None = None,
+) -> Path:
+    """Fact-check the dry-run package and write it without marking a topic used."""
+
+    package = json.loads(fixture_package_path().read_text(encoding="utf-8"))
+    config = load_niche()
+    script, documents = package_parts(package)
+    report = fact_check(
+        script,
+        documents,
+        niche=config,
+        llm_payload=load_llm_fixture(fixture_verdict_path()),
+    )
+    destination = out_path or default_output_path(str(package["topic"]))
+    report_destination = report_path or default_report_path(destination)
+    write_report(report, report_destination)
+    if not report.passed:
+        raise FactCheckError(
+            format_block_message(report) + f"\nReport: {report_destination}"
+        )
+    package["fact_check"] = {
+        "passed": True,
+        "report": report_destination.name,
+        "fixture": True,
+    }
+    return write_package(package, destination)
+
+
 def write_video_package(
     topic: str | None,
     *,
@@ -192,6 +234,11 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Canned fact-check verdict. Skips the second Ollama call.",
     )
+    parser.add_argument(
+        "--no-render",
+        action="store_true",
+        help="Write the package and fact report, and skip the Remotion render.",
+    )
     args = parser.parse_args(argv)
     if args.fact_fixture is not None and not args.fact_fixture.is_file():
         print(
@@ -216,22 +263,32 @@ def main(argv: list[str] | None = None) -> int:
     except FactCheckError as exc:
         print(f"edu-video: {exc}", file=sys.stderr)
         return 1
-    except httpx.ConnectError as exc:
-        target = str(exc.request.url) if exc.request is not None else ""
-        if "/api/chat" in target or ":11434" in target:
-            print(
-                "edu-video: Ollama is not reachable. Start it locally and pull "
-                "the model named in edu/config/niche.yaml.",
-                file=sys.stderr,
-            )
-        else:
-            print(f"edu-video: could not reach a source: {exc}", file=sys.stderr)
-        return 1
-    except (GroundingError, SourceError, httpx.HTTPError, ValueError, OSError) as exc:
+    except (httpx.ConnectError, GroundingError, SourceError, httpx.HTTPError) as exc:
+        print(
+            "edu-video: live fetch or Ollama is unavailable "
+            f"({exc}). Fact-checking the fixture package and rendering that. "
+            "Piper and faster-whisper are optional.",
+            file=sys.stderr,
+        )
+        try:
+            path = write_fixture_package(out_path=args.out, report_path=args.report)
+        except FactCheckError as fixture_exc:
+            print(f"edu-video: {fixture_exc}", file=sys.stderr)
+            return 1
+    except (ValueError, OSError) as exc:
         print(f"edu-video: {exc}", file=sys.stderr)
         return 1
     print(path)
     print(args.report or default_report_path(path))
+    if args.no_render:
+        return 0
+    try:
+        video, caption = render_reel(path)
+    except (RuntimeError, OSError) as exc:
+        print(f"edu-video: {exc}", file=sys.stderr)
+        return 1
+    print(video)
+    print(caption)
     return 0
 
 

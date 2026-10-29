@@ -4,7 +4,8 @@
   "private": true,
   "description": "Phase 0 Remotion engine. 1080x1920 at 30fps.",
   "scripts": {
-    "render:hello": "remotion render src/index.ts HelloWorld out/hello-world.mp4 --concurrency=1 --gl=swangle"
+    "render:hello": "remotion render src/index.ts HelloWorld out/hello-world.mp4 --concurrency=1 --gl=swangle",
+    "render:edu": "remotion render src/edu-index.ts EduReel --codec=h264 --concurrency=2 --gl=swangle"
   },
   "dependencies": {
     "@remotion/cli": "4.0.539",
