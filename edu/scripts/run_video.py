@@ -4,13 +4,16 @@
 the video: the script package is not written, and the process exits non-zero.
 A passing report writes the package, marks the topic used, and renders an mp4.
 If fetch or Ollama is down, a checked-in fixture is fact-checked and rendered
-instead. That fallback does not mark a topic used.
+instead. That fallback does not mark a topic used. A blank closing is rejected
+and retried; if it is still blank, the command exits. EDU_NO_FIXTURE=1 skips
+the fixture on any live failure.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import re
 import shutil
@@ -236,6 +239,23 @@ def write_video_package(
         )
 
 
+def _closing_was_empty(exc: BaseException) -> bool:
+    text = str(exc).casefold()
+    if "closing" not in text:
+        return False
+    return any(
+        marker in text
+        for marker in ("blank", "at least 1 character", "string_too_short")
+    )
+
+
+def _reject_instead_of_fixture(exc: BaseException) -> bool:
+    """A blank closing is a rejected script, not a reason to render the fixture."""
+    if os.environ.get("EDU_NO_FIXTURE") == "1":
+        return True
+    return _closing_was_empty(exc)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Fetch sources, write a grounded script, and fact-check it."
@@ -281,6 +301,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"edu-video: {exc}", file=sys.stderr)
         return 1
     except (httpx.ConnectError, GroundingError, SourceError, httpx.HTTPError) as exc:
+        if _reject_instead_of_fixture(exc):
+            print(f"edu-video: {exc}", file=sys.stderr)
+            return 1
         print(
             "edu-video: live fetch or Ollama is unavailable "
             f"({exc}). Fact-checking the fixture package and rendering that. "

@@ -13,7 +13,7 @@ import json
 import re
 
 import httpx
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from edu.niche import NicheConfig
 from edu.sources.model import SourceDocument
@@ -29,6 +29,8 @@ Every claim's source_sentence must be copied verbatim from that source's text.
 The hook, each beat's narration, each on_screen line, the closing, the key_takeaway,
 and each claim text may use only words that appear in the cited source sentence.
 Copy that sentence. Do not add a word, a name, or a number that is not in it.
+The closing must be one non-empty sentence copied from the cited source sentence.
+An empty closing is invalid.
 Do not write Imagine, Get, According, Wikipedia, Image, or Diagram unless that
 exact word is in the cited sentence. on_screen is not a label.
 Return one JSON object and nothing else, with this shape:
@@ -99,7 +101,7 @@ class ReelScript(BaseModel):
     topic: str
     hook: str
     beats: list[ScriptBeat]
-    closing: str
+    closing: str = Field(min_length=1)
     key_takeaway: str
     cta: str
     claims: list[ScriptClaim]
@@ -166,7 +168,8 @@ def build_messages(
     user = (
         "Write the reel script for this topic. "
         "Ground every beat in the sources below. "
-        "Use only words from the cited source sentence.\n"
+        "Use only words from the cited source sentence. "
+        "The closing must be one non-empty sentence copied from that sentence.\n"
         + json.dumps(payload, indent=2)
     )
     messages = [
@@ -374,8 +377,9 @@ def generate_script(
                     "content": (
                         "Rejected: "
                         + str(exc)
-                        + " Rewrite every hook, beat, closing, and claim using only "
-                        "words from the cited source sentence."
+                        + " The closing must be one non-empty sentence copied from "
+                        "the cited source sentence. Rewrite every hook, beat, closing, "
+                        "and claim using only words from that sentence."
                     ),
                 },
             ]

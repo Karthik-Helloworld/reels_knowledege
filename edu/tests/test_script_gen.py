@@ -6,7 +6,9 @@ import httpx
 
 from edu.niche import NicheConfig
 from edu.scripts.script_gen import (
+    OLLAMA_ATTEMPTS,
     GroundingError,
+    ReelScript,
     build_messages,
     generate_script,
 )
@@ -64,6 +66,12 @@ class ScriptGenTests(unittest.TestCase):
         self.assertIn("https://en.wikipedia.org/wiki/Moon", user)
         self.assertIn("orbit hint", user)
         self.assertIn("science & space facts", user)
+        self.assertIn("non-empty", messages[0]["content"])
+        self.assertIn("non-empty", user)
+        self.assertGreaterEqual(
+            ReelScript.model_json_schema()["properties"]["closing"]["minLength"],
+            1,
+        )
 
     def test_fixture_response_is_grounded(self) -> None:
         script = load_fixture("ollama_script.json")
@@ -227,6 +235,59 @@ class ScriptGenTests(unittest.TestCase):
                     client,
                 )
         self.assertIn("Imagine", str(caught.exception))
+
+    def test_empty_closing_is_retried_and_not_accepted(self) -> None:
+        script = load_fixture("ollama_script.json")
+        calls = {"n": 0}
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            seen["body"] = json.loads(request.content.decode())
+            body = dict(script)
+            body["closing"] = ""
+            return httpx.Response(
+                200,
+                json={"message": {"role": "assistant", "content": json.dumps(body)}},
+            )
+
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            with self.assertRaises(GroundingError) as caught:
+                generate_script(
+                    "Why the Moon has phases",
+                    "",
+                    NICHE,
+                    [DOCUMENT],
+                    client,
+                )
+        self.assertEqual(calls["n"], OLLAMA_ATTEMPTS)
+        self.assertIn("closing", str(caught.exception).casefold())
+        self.assertIn("non-empty", seen["body"]["messages"][-1]["content"])
+
+    def test_empty_closing_retries_until_a_sentence_is_present(self) -> None:
+        script = load_fixture("ollama_script.json")
+        calls = {"n": 0}
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            body = dict(script)
+            if calls["n"] == 1:
+                body["closing"] = " "
+            return httpx.Response(
+                200,
+                json={"message": {"role": "assistant", "content": json.dumps(body)}},
+            )
+
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            result = generate_script(
+                "Why the Moon has phases",
+                "",
+                NICHE,
+                [DOCUMENT],
+                client,
+            )
+        self.assertEqual(calls["n"], 2)
+        self.assertEqual(result.closing, script["closing"])
 
 
 if __name__ == "__main__":
