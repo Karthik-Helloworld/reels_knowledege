@@ -1,0 +1,11 @@
+{
+  "claims": [
+    {"id": "hook", "supported": true, "reason": "The cited source states this."},
+    {
+      "id": "beat-0",
+      "supported": false,
+      "reason": "low support: the cited source does not state this claim"
+    },
+    {"id": "closing", "supported": true, "reason": "The cited source states this."}
+  ]
+}
