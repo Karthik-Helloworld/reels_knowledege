@@ -4,9 +4,9 @@
 the video: the script package is not written, and the process exits non-zero.
 A passing report writes the package, marks the topic used, and renders an mp4.
 If fetch or Ollama is down, a checked-in fixture is fact-checked and rendered
-instead. That fallback does not mark a topic used. A blank closing is rejected
-and retried; if it is still blank, the command exits. EDU_NO_FIXTURE=1 skips
-the fixture on any live failure.
+instead. That fallback does not mark a topic used. A blank script field is
+rejected and retried; if it is still blank, the command exits.
+EDU_NO_FIXTURE=1 skips the fixture on any live failure.
 """
 
 from __future__ import annotations
@@ -239,21 +239,19 @@ def write_video_package(
         )
 
 
-def _closing_was_empty(exc: BaseException) -> bool:
+def _script_field_was_blank(exc: BaseException) -> bool:
     text = str(exc).casefold()
-    if "closing" not in text:
-        return False
     return any(
         marker in text
-        for marker in ("blank", "at least 1 character", "string_too_short")
+        for marker in ("must not be blank", "at least 1 character", "string_too_short")
     )
 
 
 def _reject_instead_of_fixture(exc: BaseException) -> bool:
-    """A blank closing is a rejected script, not a reason to render the fixture."""
+    """A blank script field is a rejected script, not a reason to render the fixture."""
     if os.environ.get("EDU_NO_FIXTURE") == "1":
         return True
-    return _closing_was_empty(exc)
+    return _script_field_was_blank(exc)
 
 
 def main(argv: list[str] | None = None) -> int:

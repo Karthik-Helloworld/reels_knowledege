@@ -233,6 +233,18 @@ class ScenePlanTests(unittest.TestCase):
         fixture.assert_not_called()
         render.assert_not_called()
 
+        blank_takeaway = GroundingError(
+            "script JSON did not match the schema: key_takeaway\n"
+            "  Value error, must not be blank [type=value_error]"
+        )
+        with patch(
+            "edu.scripts.run_video.complete_video",
+            side_effect=blank_takeaway,
+        ), patch("edu.scripts.run_video.write_fixture_package") as takeaway_fixture:
+            code = video_main(["--topic", "Black hole", "--no-render"])
+        self.assertEqual(code, 1)
+        takeaway_fixture.assert_not_called()
+
     def test_live_run_can_refuse_the_fixture(self) -> None:
         from edu.scripts.script_gen import GroundingError
 

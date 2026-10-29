@@ -68,10 +68,15 @@ class ScriptGenTests(unittest.TestCase):
         self.assertIn("science & space facts", user)
         self.assertIn("non-empty", messages[0]["content"])
         self.assertIn("non-empty", user)
-        self.assertGreaterEqual(
-            ReelScript.model_json_schema()["properties"]["closing"]["minLength"],
-            1,
-        )
+        schema = ReelScript.model_json_schema()
+        for name in ("topic", "hook", "closing", "key_takeaway", "cta"):
+            self.assertGreaterEqual(schema["properties"][name]["minLength"], 1)
+        beat = schema["$defs"]["ScriptBeat"]["properties"]
+        claim = schema["$defs"]["ScriptClaim"]["properties"]
+        for name in beat:
+            self.assertGreaterEqual(beat[name]["minLength"], 1)
+        for name in claim:
+            self.assertGreaterEqual(claim[name]["minLength"], 1)
 
     def test_fixture_response_is_grounded(self) -> None:
         script = load_fixture("ollama_script.json")
@@ -262,7 +267,7 @@ class ScriptGenTests(unittest.TestCase):
                 )
         self.assertEqual(calls["n"], OLLAMA_ATTEMPTS)
         self.assertIn("closing", str(caught.exception).casefold())
-        self.assertIn("non-empty", seen["body"]["messages"][-1]["content"])
+        self.assertIn("key_takeaway", seen["body"]["messages"][-1]["content"])
 
     def test_empty_closing_retries_until_a_sentence_is_present(self) -> None:
         script = load_fixture("ollama_script.json")

@@ -29,8 +29,8 @@ Every claim's source_sentence must be copied verbatim from that source's text.
 The hook, each beat's narration, each on_screen line, the closing, the key_takeaway,
 and each claim text may use only words that appear in the cited source sentence.
 Copy that sentence. Do not add a word, a name, or a number that is not in it.
-The closing must be one non-empty sentence copied from the cited source sentence.
-An empty closing is invalid.
+Every text field must be non-empty. The closing and the key_takeaway must each
+be one sentence copied from the cited source sentence. An empty field is invalid.
 Do not write Imagine, Get, According, Wikipedia, Image, or Diagram unless that
 exact word is in the cited sentence. on_screen is not a label.
 Return one JSON object and nothing else, with this shape:
@@ -50,9 +50,9 @@ class GroundingError(ValueError):
 class ScriptBeat(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    narration: str
-    on_screen: str
-    source_url: str
+    narration: str = Field(min_length=1)
+    on_screen: str = Field(min_length=1)
+    source_url: str = Field(min_length=1)
 
     @field_validator("narration", "on_screen")
     @classmethod
@@ -74,9 +74,9 @@ class ScriptBeat(BaseModel):
 class ScriptClaim(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    text: str
-    source_url: str
-    source_sentence: str
+    text: str = Field(min_length=1)
+    source_url: str = Field(min_length=1)
+    source_sentence: str = Field(min_length=1)
 
     @field_validator("text", "source_sentence")
     @classmethod
@@ -98,12 +98,12 @@ class ScriptClaim(BaseModel):
 class ReelScript(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    topic: str
-    hook: str
+    topic: str = Field(min_length=1)
+    hook: str = Field(min_length=1)
     beats: list[ScriptBeat]
     closing: str = Field(min_length=1)
-    key_takeaway: str
-    cta: str
+    key_takeaway: str = Field(min_length=1)
+    cta: str = Field(min_length=1)
     claims: list[ScriptClaim]
 
     @field_validator("topic", "closing", "key_takeaway", "cta")
@@ -169,7 +169,8 @@ def build_messages(
         "Write the reel script for this topic. "
         "Ground every beat in the sources below. "
         "Use only words from the cited source sentence. "
-        "The closing must be one non-empty sentence copied from that sentence.\n"
+        "The closing and the key_takeaway must each be one non-empty sentence "
+        "copied from that sentence.\n"
         + json.dumps(payload, indent=2)
     )
     messages = [
@@ -377,9 +378,10 @@ def generate_script(
                     "content": (
                         "Rejected: "
                         + str(exc)
-                        + " The closing must be one non-empty sentence copied from "
-                        "the cited source sentence. Rewrite every hook, beat, closing, "
-                        "and claim using only words from that sentence."
+                        + " Every text field must be non-empty. The closing and the "
+                        "key_takeaway must each be one sentence copied from the cited "
+                        "source sentence. Rewrite every hook, beat, closing, and claim "
+                        "using only words from that sentence."
                     ),
                 },
             ]
