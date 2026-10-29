@@ -1,6 +1,6 @@
 # Local educational video pipeline.
 
-.PHONY: edu-setup edu-render-hello edu-test edu-video
+.PHONY: edu-setup edu-render-hello edu-test edu-video review
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
@@ -24,6 +24,10 @@ edu-video:
 	else \
 	  $$python -m edu.scripts.run_video --topic "$(TOPIC)"; \
 	fi
+
+review:
+	@python=$$(test -x $(PYTHON) && echo $(PYTHON) || echo python3); \
+	$$python -m edu.scripts.review $(ARGS)
 
 edu-test:
 	@python=$$(test -x $(PYTHON) && echo $(PYTHON) || echo python3); \

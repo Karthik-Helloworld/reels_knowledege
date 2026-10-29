@@ -13,6 +13,7 @@ import argparse
 import json
 import random
 import re
+import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +31,7 @@ from edu.scripts.fact_check import (
     package_parts,
     write_report,
 )
+from edu.scripts.pending import stage_pending
 from edu.scripts.render_reel import render_reel
 from edu.scripts.script_gen import GroundingError, generate_script
 from edu.scripts.topic_picker import (
@@ -287,9 +289,43 @@ def main(argv: list[str] | None = None) -> int:
     except (RuntimeError, OSError) as exc:
         print(f"edu-video: {exc}", file=sys.stderr)
         return 1
-    print(video)
-    print(caption)
+    try:
+        bundle = stage_pending(
+            path,
+            video,
+            caption,
+            args.report or default_report_path(path),
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(
+            f"edu-video: could not store the pending review bundle: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    discard_loose_outputs(path, video, caption, args.report or default_report_path(path))
+    print(bundle)
     return 0
+
+
+def discard_loose_outputs(
+    package_path: Path,
+    video_path: Path,
+    caption_path: Path,
+    report_path: Path,
+) -> None:
+    """Remove the ungated copies once the pending bundle has them.
+
+    The pending directory is the only finished video. A loose mp4 next to it
+    would look publishable before anyone approves it.
+    """
+
+    props = package_path.with_suffix(".props.json")
+    media = package_path.parent / f"{package_path.stem}-media"
+    for path in (video_path, caption_path, package_path, report_path, props):
+        if path.is_file():
+            path.unlink()
+    if media.is_dir():
+        shutil.rmtree(media)
 
 
 if __name__ == "__main__":
